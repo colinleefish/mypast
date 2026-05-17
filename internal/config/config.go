@@ -96,7 +96,12 @@ func Load() (Config, error) {
 			Timeout:    30 * time.Second,
 		},
 		Summarizer: SummarizerConfig{
-			Enabled:               true,
+			// Disabled by default — the rolling overview_text summarizer is
+			// being retired in favour of the T0→T3 atom/scene/memory
+			// pipeline (see docs/design-l0-l4.md). Set
+			// MYPAST_SUMMARIZER_ENABLED=true to opt back in until the new
+			// pipeline lands.
+			Enabled:               false,
 			PollInterval:          15 * time.Second,
 			BatchSize:             8,
 			StaleSummarizingAfter: 3 * time.Minute,
