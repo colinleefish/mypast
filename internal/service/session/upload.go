@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/colinleefish/mypast/internal/model"
+	"github.com/colinleefish/mypast/internal/uri"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
@@ -81,7 +82,7 @@ func (s *UploadService) Upload(ctx context.Context, input UploadInput) (UploadRe
 	}
 
 	now := s.now().UTC()
-	rootURI := buildSessionRootURI(sessionID)
+	rootURI := uri.BuildSession(sessionID)
 
 	input.SessionID = sessionID
 	archiveMessagesContent, err := buildMessagesJSONL(input.Messages, now)
@@ -133,11 +134,11 @@ func (s *UploadService) Upload(ctx context.Context, input UploadInput) (UploadRe
 		return UploadResult{}, err
 	}
 
-	archiveMessagesURI := buildArchiveMessagesURI(rootURI, archiveIdx)
+	turnURI := uri.BuildSessionTurn(sessionID, archiveIdx)
 
 	return UploadResult{
-		URI:        archiveMessagesURI,
-		ParentURI:  parentURIFromURI(archiveMessagesURI),
+		URI:        turnURI,
+		ParentURI:  uri.BuildSession(sessionID) + "/",
 		RootURI:    rootURI,
 		Category:   sessionCategory,
 		CreatedAt:  turn.CreatedAt,
@@ -223,26 +224,6 @@ func newUUIDv7() (uuid.UUID, error) {
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
-}
-
-func buildSessionRootURI(sessionID string) string {
-	return "mypast://sessions/" + sessionID
-}
-
-func buildArchiveDirURI(rootURI string, archiveIdx int) string {
-	return fmt.Sprintf("%s/history/%d", rootURI, archiveIdx)
-}
-
-func buildArchiveMessagesURI(rootURI string, archiveIdx int) string {
-	return buildArchiveDirURI(rootURI, archiveIdx) + "/messages.jsonl"
-}
-
-func parentURIFromURI(uri string) string {
-	idx := strings.LastIndex(uri, "/")
-	if idx < len("mypast://x") {
-		return "mypast://"
-	}
-	return uri[:idx]
 }
 
 type sessionMessageLine struct {

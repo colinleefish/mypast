@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/colinleefish/mypast/internal/model"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -33,49 +32,4 @@ func New(ctx context.Context, dsn string) (*gorm.DB, error) {
 	}
 
 	return db, nil
-}
-
-func AutoMigrate(db *gorm.DB) error {
-	if err := db.AutoMigrate(&model.Session{}); err != nil {
-		return fmt.Errorf("auto migrate sessions: %w", err)
-	}
-	if err := renameLegacySessionTurnMessagesColumn(db); err != nil {
-		return err
-	}
-	if err := db.AutoMigrate(&model.SessionTurn{}); err != nil {
-		return fmt.Errorf("auto migrate: %w", err)
-	}
-	return nil
-}
-
-// renameLegacySessionTurnMessagesColumn migrates from earlier dev-time column
-// names (messages_json_l, message_json_l) to the canonical messages_jsonl.
-// One-shot; safe to remove once all environments have been migrated.
-// TODO(cleanup): drop after all envs are confirmed on messages_jsonl.
-func renameLegacySessionTurnMessagesColumn(db *gorm.DB) error {
-	migrator := db.Migrator()
-	if !migrator.HasTable(&model.SessionTurn{}) {
-		return nil
-	}
-
-	if migrator.HasColumn(&model.SessionTurn{}, "messages_jsonl") {
-		return nil
-	}
-
-	legacyColumns := []string{"message_json_l", "messages_json_l"}
-	for _, oldName := range legacyColumns {
-		if !migrator.HasColumn(&model.SessionTurn{}, oldName) {
-			continue
-		}
-		if err := migrator.RenameColumn(&model.SessionTurn{}, oldName, "messages_jsonl"); err != nil {
-			return fmt.Errorf(
-				"rename session_turns.%s to messages_jsonl: %w",
-				oldName,
-				err,
-			)
-		}
-		return nil
-	}
-
-	return nil
 }

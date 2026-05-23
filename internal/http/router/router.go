@@ -1,18 +1,56 @@
 package router
 
 import (
+	"io/fs"
+	"net/http"
+
+	"github.com/colinleefish/mypast/internal/config"
 	"github.com/colinleefish/mypast/internal/http/handler"
+	"github.com/colinleefish/mypast/internal/http/middleware"
+	"github.com/colinleefish/mypast/internal/http/static"
 	"github.com/gin-gonic/gin"
 )
 
 func New(
+	cfg config.Config,
 	healthHandler *handler.HealthHandler,
 	sessionUploadHandler *handler.SessionUploadHandler,
-) *gin.Engine {
+	browseHandler *handler.BrowseHandler,
+) (*gin.Engine, error) {
 	r := gin.Default()
 
 	r.GET("/healthz", healthHandler.Get)
-	r.POST("/api/v1/sessions/:session_id/upload", sessionUploadHandler.Upload)
 
-	return r
+	authMW, err := middleware.BasicAuth(cfg.Auth)
+	if err != nil {
+		return nil, err
+	}
+
+	protected := r.Group("/")
+	protected.Use(authMW)
+
+	webFS, err := fs.Sub(static.Web, "web")
+	if err != nil {
+		return nil, err
+	}
+	protected.StaticFS("/ui", http.FS(webFS))
+	protected.GET("/", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "/ui/")
+	})
+
+	protected.POST("/api/v1/sessions/:session_id/upload", sessionUploadHandler.Upload)
+
+	api := protected.Group("/api/v1/browse")
+	{
+		api.GET("/overview", browseHandler.Overview)
+		api.GET("/sessions", browseHandler.ListSessions)
+		api.GET("/sessions/:session_key", browseHandler.GetSession)
+		api.GET("/atoms", browseHandler.ListAtoms)
+		api.GET("/scenes", browseHandler.ListScenes)
+		api.GET("/memories", browseHandler.ListMemories)
+		api.GET("/pipeline-state", browseHandler.ListPipelineStates)
+		api.GET("/tasks", browseHandler.ListTasks)
+	}
+
+	return r, nil
 }

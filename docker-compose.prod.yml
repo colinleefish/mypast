@@ -1,0 +1,30 @@
+# Production: mypast + Caddy (host network).
+# - mypast → PostgreSQL 18 on host :5432 (set MYPAST_DB_URL in .env)
+# - caddy → :80 / :443 → reverse_proxy 127.0.0.1:8080
+
+services:
+  mypast:
+    build: .
+    container_name: mypast-app
+    network_mode: host
+    env_file: .env
+    environment:
+      MYPAST_ADDR: ":8080"
+      GIN_MODE: release
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: mypast-caddy
+    network_mode: host
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    depends_on:
+      - mypast
+
+volumes:
+  caddy_data:
+  caddy_config:

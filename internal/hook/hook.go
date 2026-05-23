@@ -133,6 +133,9 @@ func postUpload(
 		return 0, fmt.Errorf("build upload request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if user, pass := resolveMyPastAuth(); user != "" {
+		req.SetBasicAuth(user, pass)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -149,6 +152,37 @@ func postUpload(
 		)
 	}
 	return resp.StatusCode, nil
+}
+
+func resolveMyPastAuth() (string, string) {
+	user := strings.TrimSpace(os.Getenv("MYPAST_USERNAME"))
+	pass := strings.TrimSpace(os.Getenv("MYPAST_PASSWORD"))
+	if user == "" {
+		user = strings.TrimSpace(os.Getenv("USERNAME"))
+	}
+	if pass == "" {
+		pass = strings.TrimSpace(os.Getenv("PASSWORD"))
+	}
+
+	confPath := strings.TrimSpace(os.Getenv("MYPAST_CONF"))
+	if confPath == "" {
+		if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+			confPath = filepath.Join(home, ".mypast.conf")
+		}
+	}
+	if confPath != "" {
+		if v := readEnvValueFromFile(confPath, "MYPAST_USERNAME"); v != "" {
+			user = v
+		} else if v := readEnvValueFromFile(confPath, "USERNAME"); v != "" {
+			user = v
+		}
+		if v := readEnvValueFromFile(confPath, "MYPAST_PASSWORD"); v != "" {
+			pass = v
+		} else if v := readEnvValueFromFile(confPath, "PASSWORD"); v != "" {
+			pass = v
+		}
+	}
+	return user, pass
 }
 
 func resolveMyPastURL() string {

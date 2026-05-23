@@ -14,6 +14,18 @@ What works today:
 - Background summarizer worker that merges new turns into a per-session
   overview via an OpenAI-compatible chat-completions endpoint.
 
+Inspection CLI: `mypast cat`, `mypast tree`, `mypast meta` (Phase A).
+
+Web observer UI at `/ui/` when the server is running (browse sessions, turns, atoms,
+scenes, memories, pipeline state, and tasks).
+
+Production (`mem.colinleefish.com`): Caddy in Docker terminates TLS and proxies to
+`mypast` on `:8080` — see `deploy/Caddyfile` and `docker-compose.prod.yml`.
+
+CI/CD: GitHub Actions runs tests on PR/push; merging to `main` deploys over SSH
+(`docker compose -f docker-compose.prod.yml up -d --build` on the server). Setup:
+[`docs/cicd.md`](docs/cicd.md).
+
 Planned (see `TODO.md`): storage CLI (`store/read/list/delete/search`),
 embedding worker, hybrid recall, MCP wrapper.
 
@@ -42,7 +54,7 @@ agent (Cursor / Claude Code)
                               └──────────────┘
 ```
 
-Data model (PostgreSQL, gorm auto-migrated):
+Data model (PostgreSQL, [goose](https://github.com/pressly/goose) migrations on startup):
 
 - `sessions` — one row per agent conversation, identified by `session_key`
   (the agent's session/conversation UUID). Holds the rolling `overview_text`.
@@ -84,7 +96,7 @@ scripts/               one-off SQL utilities
 ### Local
 
 ```
-cp .env.example .env       # edit MYPAST_DB_URL, MYPAST_VLM_API_KEY, …
+cp .env.example .env       # edit MYPAST_DB_URL, MYPAST_LLM_API_KEY, …
 make run                    # go run ./cmd/mypast serve
 # or
 make build && ./bin/mypast serve
@@ -113,7 +125,7 @@ Key variables (see `.env.example` for the full list):
 |---------------------------------------|--------------------------------------------------------------------|
 | `MYPAST_DB_URL`                       | `postgres://admin@127.0.0.1:5432/mypast_dev?sslmode=disable`       |
 | `MYPAST_ADDR`                         | `:8080`                                                            |
-| `MYPAST_VLM_API_BASE` / `_API_KEY` / `_MODEL` | OpenAI-compatible endpoint used by the summarizer          |
+| `MYPAST_LLM_API_BASE` / `_API_KEY` / `_MODEL` | OpenAI-compatible endpoint used by the summarizer            |
 | `MYPAST_SUMMARIZER_ENABLED`           | `true`                                                             |
 | `MYPAST_SUMMARIZER_POLL_INTERVAL`     | `15s`                                                              |
 | `MYPAST_SUMMARIZER_MAX_TURNS_PER_MERGE` | `4`                                                              |
@@ -180,7 +192,7 @@ pairing on Claude Code) live in `internal/hook/cursor.go` and
 
 `session_id` must be a UUID. Each request appends one `session_turns` row
 to the session (creating the session row on first upload). Response includes
-the `mypast://sessions/<id>/history/<n>/messages.jsonl` URI for the new turn.
+the `mypast://sessions/<id>/turns/<n>` URI for the new turn.
 
 `GET /healthz` — DB ping + `pg_extension` lookup for `vector`.
 
