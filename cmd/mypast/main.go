@@ -61,25 +61,28 @@ func main() {
 					Timeout:    cfg.LLM.Timeout,
 				})
 				if err != nil {
-					return fmt.Errorf("init llm client: %w", err)
-				}
+					log.Printf(
+						"llm client unavailable; ingestion continues but background workers are off: %v",
+						err,
+					)
+				} else {
+					if cfg.Extraction.Enabled {
+						t1Worker := extract.NewWorker(database, llmClient, cfg.Extraction)
+						go func() {
+							if err := t1Worker.Run(ctx); err != nil {
+								log.Printf("t1 extraction worker exited with error: %v", err)
+							}
+						}()
+					}
 
-				if cfg.Extraction.Enabled {
-					t1Worker := extract.NewWorker(database, llmClient, cfg.Extraction)
-					go func() {
-						if err := t1Worker.Run(ctx); err != nil {
-							log.Printf("t1 extraction worker exited with error: %v", err)
-						}
-					}()
-				}
-
-				if cfg.Summarizer.Enabled {
-					worker := summarize.NewWorker(database, llmClient, cfg.Summarizer)
-					go func() {
-						if err := worker.Run(ctx); err != nil {
-							log.Printf("summarization worker exited with error: %v", err)
-						}
-					}()
+					if cfg.Summarizer.Enabled {
+						worker := summarize.NewWorker(database, llmClient, cfg.Summarizer)
+						go func() {
+							if err := worker.Run(ctx); err != nil {
+								log.Printf("summarization worker exited with error: %v", err)
+							}
+						}()
+					}
 				}
 			}
 
