@@ -20,8 +20,18 @@ const (
 type Config struct {
 	DB         DBConfig
 	Server     ServerConfig
-	VLM        VLMConfig
+	Auth       AuthConfig
+	LLM        LLMConfig
 	Summarizer SummarizerConfig
+}
+
+type AuthConfig struct {
+	Username string
+	Password string
+}
+
+func (a AuthConfig) Enabled() bool {
+	return strings.TrimSpace(a.Username) != "" || strings.TrimSpace(a.Password) != ""
 }
 
 type DBConfig struct {
@@ -33,7 +43,7 @@ type ServerConfig struct {
 	ShutdownTimeout time.Duration
 }
 
-type VLMConfig struct {
+type LLMConfig struct {
 	Provider   string
 	APIBase    string
 	APIKey     string
@@ -59,14 +69,18 @@ type fileConfig struct {
 		Addr            string `toml:"addr"`
 		ShutdownTimeout string `toml:"shutdown_timeout"`
 	} `toml:"server"`
-	VLM struct {
+	LLM struct {
 		Provider   string `toml:"provider"`
 		APIBase    string `toml:"api_base"`
 		APIKey     string `toml:"api_key"`
 		Model      string `toml:"model"`
 		MaxRetries *int   `toml:"max_retries"`
 		Timeout    string `toml:"timeout"`
-	} `toml:"vlm"`
+	} `toml:"llm"`
+	Auth struct {
+		Username string `toml:"username"`
+		Password string `toml:"password"`
+	} `toml:"auth"`
 	Summarizer struct {
 		Enabled               *bool  `toml:"enabled"`
 		PollInterval          string `toml:"poll_interval"`
@@ -90,7 +104,7 @@ func Load() (Config, error) {
 			Addr:            defaultAddr,
 			ShutdownTimeout: 5 * time.Second,
 		},
-		VLM: VLMConfig{
+		LLM: LLMConfig{
 			Provider:   "openai",
 			MaxRetries: 2,
 			Timeout:    30 * time.Second,
@@ -121,7 +135,22 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	if cfg.Auth.Enabled() {
+		if strings.TrimSpace(cfg.Auth.Username) == "" || strings.TrimSpace(cfg.Auth.Password) == "" {
+			return Config{}, fmt.Errorf("auth: both USERNAME and PASSWORD must be set when either is provided")
+		}
+	}
+
 	return cfg, nil
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func loadDotEnv(path string) error {
@@ -214,27 +243,33 @@ func loadFileConfig(cfg *Config, path string, explicitPath bool) error {
 		}
 		cfg.Server.ShutdownTimeout = timeout
 	}
-	if fc.VLM.Provider != "" {
-		cfg.VLM.Provider = fc.VLM.Provider
+	if fc.Auth.Username != "" {
+		cfg.Auth.Username = fc.Auth.Username
 	}
-	if fc.VLM.APIBase != "" {
-		cfg.VLM.APIBase = fc.VLM.APIBase
+	if fc.Auth.Password != "" {
+		cfg.Auth.Password = fc.Auth.Password
 	}
-	if fc.VLM.APIKey != "" {
-		cfg.VLM.APIKey = fc.VLM.APIKey
+	if fc.LLM.Provider != "" {
+		cfg.LLM.Provider = fc.LLM.Provider
 	}
-	if fc.VLM.Model != "" {
-		cfg.VLM.Model = fc.VLM.Model
+	if fc.LLM.APIBase != "" {
+		cfg.LLM.APIBase = fc.LLM.APIBase
 	}
-	if fc.VLM.MaxRetries != nil {
-		cfg.VLM.MaxRetries = *fc.VLM.MaxRetries
+	if fc.LLM.APIKey != "" {
+		cfg.LLM.APIKey = fc.LLM.APIKey
 	}
-	if fc.VLM.Timeout != "" {
-		timeout, err := time.ParseDuration(fc.VLM.Timeout)
+	if fc.LLM.Model != "" {
+		cfg.LLM.Model = fc.LLM.Model
+	}
+	if fc.LLM.MaxRetries != nil {
+		cfg.LLM.MaxRetries = *fc.LLM.MaxRetries
+	}
+	if fc.LLM.Timeout != "" {
+		timeout, err := time.ParseDuration(fc.LLM.Timeout)
 		if err != nil {
-			return fmt.Errorf("parse vlm.timeout in %q: %w", path, err)
+			return fmt.Errorf("parse llm.timeout in %q: %w", path, err)
 		}
-		cfg.VLM.Timeout = timeout
+		cfg.LLM.Timeout = timeout
 	}
 	if fc.Summarizer.Enabled != nil {
 		cfg.Summarizer.Enabled = *fc.Summarizer.Enabled
@@ -280,31 +315,37 @@ func applyEnvOverrides(cfg *Config) error {
 		}
 		cfg.Server.ShutdownTimeout = timeout
 	}
-	if v := os.Getenv("MYPAST_VLM_PROVIDER"); v != "" {
-		cfg.VLM.Provider = v
+	if v := firstEnv("MYPAST_USERNAME", "USERNAME"); v != "" {
+		cfg.Auth.Username = v
 	}
-	if v := os.Getenv("MYPAST_VLM_API_BASE"); v != "" {
-		cfg.VLM.APIBase = v
+	if v := firstEnv("MYPAST_PASSWORD", "PASSWORD"); v != "" {
+		cfg.Auth.Password = v
 	}
-	if v := os.Getenv("MYPAST_VLM_API_KEY"); v != "" {
-		cfg.VLM.APIKey = v
+	if v := os.Getenv("MYPAST_LLM_PROVIDER"); v != "" {
+		cfg.LLM.Provider = v
 	}
-	if v := os.Getenv("MYPAST_VLM_MODEL"); v != "" {
-		cfg.VLM.Model = v
+	if v := os.Getenv("MYPAST_LLM_API_BASE"); v != "" {
+		cfg.LLM.APIBase = v
 	}
-	if v := os.Getenv("MYPAST_VLM_MAX_RETRIES"); v != "" {
+	if v := os.Getenv("MYPAST_LLM_API_KEY"); v != "" {
+		cfg.LLM.APIKey = v
+	}
+	if v := os.Getenv("MYPAST_LLM_MODEL"); v != "" {
+		cfg.LLM.Model = v
+	}
+	if v := os.Getenv("MYPAST_LLM_MAX_RETRIES"); v != "" {
 		parsed, err := strconv.Atoi(strings.TrimSpace(v))
 		if err != nil {
-			return fmt.Errorf("parse MYPAST_VLM_MAX_RETRIES: %w", err)
+			return fmt.Errorf("parse MYPAST_LLM_MAX_RETRIES: %w", err)
 		}
-		cfg.VLM.MaxRetries = parsed
+		cfg.LLM.MaxRetries = parsed
 	}
-	if v := os.Getenv("MYPAST_VLM_TIMEOUT"); v != "" {
+	if v := os.Getenv("MYPAST_LLM_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil {
-			return fmt.Errorf("parse MYPAST_VLM_TIMEOUT: %w", err)
+			return fmt.Errorf("parse MYPAST_LLM_TIMEOUT: %w", err)
 		}
-		cfg.VLM.Timeout = d
+		cfg.LLM.Timeout = d
 	}
 	if v := os.Getenv("MYPAST_SUMMARIZER_ENABLED"); v != "" {
 		switch strings.ToLower(strings.TrimSpace(v)) {

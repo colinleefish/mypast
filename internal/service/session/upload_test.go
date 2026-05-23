@@ -5,22 +5,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/colinleefish/mypast/internal/uri"
 )
 
-func TestBuildSessionRootAndArchiveURI(t *testing.T) {
-	root := buildSessionRootURI("4f1916ce-2f6e-4b76-8249-4a5f4184fd8d")
-	if root != "mypast://sessions/4f1916ce-2f6e-4b76-8249-4a5f4184fd8d" {
-		t.Fatalf("unexpected root uri: %s", root)
-	}
-
-	parent := parentURIFromURI(root + "/messages.jsonl")
-	if parent != root {
-		t.Fatalf("unexpected parent uri: %s", parent)
-	}
-
-	uri := buildArchiveMessagesURI(root, 0)
-	if uri != root+"/history/0/messages.jsonl" {
-		t.Fatalf("unexpected uri: %s", uri)
+func TestBuildSessionTurnURI(t *testing.T) {
+	got := uri.BuildSessionTurn("4f1916ce-2f6e-4b76-8249-4a5f4184fd8d", 0)
+	want := "mypast://sessions/4f1916ce-2f6e-4b76-8249-4a5f4184fd8d/turns/0"
+	if got != want {
+		t.Fatalf("unexpected turn uri: %s", got)
 	}
 }
 

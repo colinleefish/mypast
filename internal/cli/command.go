@@ -7,15 +7,19 @@ import (
 	"os"
 	"strings"
 
+	"github.com/colinleefish/mypast/internal/config"
+	"github.com/colinleefish/mypast/internal/db"
 	"github.com/colinleefish/mypast/internal/hook"
+	"github.com/colinleefish/mypast/internal/service/inspect"
 )
 
 type ServeFunc func(context.Context) error
 
 type Runner struct {
+	Config config.Config
 	Serve  ServeFunc
-	Stdin  io.Reader // optional, defaults to os.Stdin
-	Stdout io.Writer // optional, defaults to os.Stdout
+	Stdin  io.Reader
+	Stdout io.Writer
 }
 
 func (r Runner) Run(ctx context.Context, args []string) error {
@@ -26,6 +30,8 @@ func (r Runner) Run(ctx context.Context, args []string) error {
 	switch args[0] {
 	case "hook-submit":
 		return r.runHookSubmit(ctx, args[1:])
+	case "cat", "tree", "meta":
+		return r.runInspect(ctx, args[0], args[1:])
 	case "store", "read", "list", "delete", "search", "load-context":
 		return fmt.Errorf("%q command is planned but not implemented yet", args[0])
 	default:
@@ -60,8 +66,43 @@ func (r Runner) runHookSubmit(ctx context.Context, args []string) error {
 	})
 }
 
-// parseFlagValue extracts `--key=value` or `--key value` from args.
-// Returns "" when the flag is absent.
+func (r Runner) runInspect(ctx context.Context, command string, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("%s requires exactly one URI argument", command)
+	}
+
+	database, err := db.New(ctx, r.Config.DB.URL)
+	if err != nil {
+		return fmt.Errorf("db connect: %w", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		return fmt.Errorf("get db handle: %w", err)
+	}
+	defer sqlDB.Close()
+
+	if err := db.Migrate(ctx, database); err != nil {
+		return fmt.Errorf("db migrate: %w", err)
+	}
+
+	stdout := r.Stdout
+	if stdout == nil {
+		stdout = os.Stdout
+	}
+
+	svc := inspect.NewService(database)
+	switch command {
+	case "cat":
+		return svc.Cat(ctx, args[0], stdout)
+	case "tree":
+		return svc.Tree(ctx, args[0], stdout)
+	case "meta":
+		return svc.Meta(ctx, args[0], stdout)
+	default:
+		return fmt.Errorf("unknown inspect command %q", command)
+	}
+}
+
 func parseFlagValue(args []string, key string) string {
 	for i, a := range args {
 		if a == key && i+1 < len(args) {
@@ -80,6 +121,9 @@ Usage:
   mypast serve                Start HTTP server (default)
   mypast hook-submit --source=<cursor|cc|codex>
                               Receive an agent transcript hook payload on stdin
+  mypast cat <uri>            Print body / messages_jsonl for a URI
+  mypast tree <uri-prefix>    List child URIs under a prefix
+  mypast meta <uri>           Print row metadata as JSON
   mypast store <uri>          Planned
   mypast read <uri>           Planned
   mypast list <prefix>        Planned

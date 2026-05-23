@@ -15,6 +15,7 @@ import (
 	"github.com/colinleefish/mypast/internal/http/router"
 	"github.com/colinleefish/mypast/internal/llm"
 	"github.com/colinleefish/mypast/internal/server"
+	"github.com/colinleefish/mypast/internal/service/browse"
 	"github.com/colinleefish/mypast/internal/service/health"
 	"github.com/colinleefish/mypast/internal/service/session"
 	"github.com/colinleefish/mypast/internal/service/summarize"
@@ -30,6 +31,7 @@ func main() {
 	defer cancel()
 
 	runner := cli.Runner{
+		Config: cfg,
 		Serve: func(ctx context.Context) error {
 			database, err := db.New(ctx, cfg.DB.URL)
 			if err != nil {
@@ -41,7 +43,7 @@ func main() {
 			}
 			defer sqlDB.Close()
 
-			if err := db.AutoMigrate(database); err != nil {
+			if err := db.Migrate(ctx, database); err != nil {
 				return fmt.Errorf("db migrate: %w", err)
 			}
 
@@ -50,12 +52,12 @@ func main() {
 
 			if cfg.Summarizer.Enabled {
 				llmClient, err := llm.NewOpenAICompatibleClient(llm.OpenAICompatibleConfig{
-					Provider:   cfg.VLM.Provider,
-					APIBase:    cfg.VLM.APIBase,
-					APIKey:     cfg.VLM.APIKey,
-					Model:      cfg.VLM.Model,
-					MaxRetries: cfg.VLM.MaxRetries,
-					Timeout:    cfg.VLM.Timeout,
+					Provider:   cfg.LLM.Provider,
+					APIBase:    cfg.LLM.APIBase,
+					APIKey:     cfg.LLM.APIKey,
+					Model:      cfg.LLM.Model,
+					MaxRetries: cfg.LLM.MaxRetries,
+					Timeout:    cfg.LLM.Timeout,
 				})
 				if err != nil {
 					return fmt.Errorf("init llm client: %w", err)
@@ -69,10 +71,15 @@ func main() {
 				}()
 			}
 
+			browseSvc := browse.NewService(database)
 			healthHandler := handler.NewHealthHandler(healthSvc)
 			sessionUploadHandler := handler.NewSessionUploadHandler(sessionUploadSvc)
+			browseHandler := handler.NewBrowseHandler(browseSvc)
 
-			httpRouter := router.New(healthHandler, sessionUploadHandler)
+			httpRouter, err := router.New(cfg, healthHandler, sessionUploadHandler, browseHandler)
+			if err != nil {
+				return fmt.Errorf("build router: %w", err)
+			}
 
 			return server.RunHTTP(ctx, cfg.Server, httpRouter)
 		},
