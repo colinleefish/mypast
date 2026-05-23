@@ -15,11 +15,12 @@ const state = {
   tab: "overview",
   overview: null,
   selectedKey: null,
+  selectedRowIdx: null,
+  atomsFilter: { q: "", category: "all" },
 };
 
 const $ = (sel) => document.querySelector(sel);
 const panel = () => $("#panel");
-const detail = () => $("#detail");
 const statusEl = () => $("#status");
 
 function showStatus(msg) {
@@ -54,10 +55,71 @@ function esc(s) {
 function fmtTime(s) {
   if (!s) return "—";
   try {
-    return new Date(s).toLocaleString();
+    const d = new Date(s);
+    return d.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
   } catch {
     return s;
   }
+}
+
+function fmtTimeShort(s) {
+  if (!s) return "—";
+  try {
+    const d = new Date(s);
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  } catch {
+    return s;
+  }
+}
+
+function field(row, ...keys) {
+  for (const k of keys) {
+    if (row[k] != null && row[k] !== "") return row[k];
+  }
+  return null;
+}
+
+function sessionKeyFromURI(uri) {
+  const m = /mypast:\/\/sessions\/([^/]+)/i.exec(uri || "");
+  if (!m) return null;
+  const key = m[1];
+  return key.length > 10 ? key.slice(0, 8) + "…" : key;
+}
+
+function truncate(s, max) {
+  if (!s) return "";
+  const t = String(s).trim();
+  if (t.length <= max) return t;
+  return t.slice(0, max - 1) + "…";
+}
+
+function categoryBadge(cat) {
+  const c = (cat || "default").toLowerCase();
+  const cls = ["profile", "preferences", "entities", "events"].includes(c)
+    ? `badge-${c}`
+    : "badge-default";
+  return `<span class="badge ${cls}">${esc(c)}</span>`;
+}
+
+function statusBadge(status) {
+  const s = (status || "unknown").toLowerCase();
+  const destructive = s === "failed";
+  const cls = destructive ? "badge-destructive" : "badge-outline";
+  return `<span class="badge ${cls} status-dot ${esc(s)}">${esc(s)}</span>`;
+}
+
+function pageHeader(title, description) {
+  return `
+    <div class="page-header">
+      <h2>${esc(title)}</h2>
+      ${description ? `<p>${description}</p>` : ""}
+    </div>`;
 }
 
 function parseJSONL(raw) {
@@ -66,7 +128,7 @@ function parseJSONL(raw) {
     .trim()
     .split("\n")
     .filter(Boolean)
-    .map((line, i) => {
+    .map((line) => {
       try {
         return JSON.parse(line);
       } catch {
@@ -91,21 +153,23 @@ function renderMessages(jsonl) {
 
 function renderNav() {
   const counts = state.overview?.counts || {};
-  $("#nav").innerHTML = tabs
-    .map((t) => {
-      const key =
-        t.id === "pipeline"
-          ? "pipeline_states"
-          : t.id === "overview" || t.id === "guide"
-            ? null
-            : t.id;
-      const n = key ? counts[key] ?? "—" : "";
-      return `<button type="button" data-tab="${t.id}" class="${state.tab === t.id ? "active" : ""}">
+  $("#nav").innerHTML = `
+    <div class="nav-group-label">Browse</div>
+    ${tabs
+      .map((t) => {
+        const key =
+          t.id === "pipeline"
+            ? "pipeline_states"
+            : t.id === "overview" || t.id === "guide"
+              ? null
+              : t.id;
+        const n = key ? counts[key] ?? "—" : "";
+        return `<button type="button" data-tab="${t.id}" class="${state.tab === t.id ? "active" : ""}">
         <span>${t.label}</span>
         ${n !== "" ? `<span class="count">${n}</span>` : ""}
       </button>`;
-    })
-    .join("");
+      })
+      .join("")}`;
 
   $("#nav").querySelectorAll("button").forEach((btn) => {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
@@ -115,7 +179,7 @@ function renderNav() {
 async function switchTab(id) {
   state.tab = id;
   state.selectedKey = null;
-  detail().innerHTML = '<p class="detail-placeholder">Select a row to inspect</p>';
+  state.selectedRowIdx = null;
   renderNav();
   showStatus("");
   try {
@@ -132,156 +196,361 @@ async function loadOverviewCounts() {
 
 function renderGuideHTML() {
   return `
-    <h2>Data model</h2>
-    <p class="guide-lead">
-      Raw chats are captured into <strong>sessions</strong>, then distilled upward through
-      <strong>turns → atoms → scenes → memories</strong>. Workers are tracked in
-      <strong>pipeline_state</strong> and <strong>tasks</strong>.
-    </p>
-
+    ${pageHeader("Guide", "How capture and distillation layers connect.")}
     <div class="guide-flow" aria-label="Distillation pyramid">
-      <div class="guide-step guide-op">
-        <span class="guide-tier">ops</span>
-        <strong>pipeline_state</strong>
-        <span class="guide-sub">per session · t1 / t2 / t3 status</span>
-      </div>
-      <div class="guide-arrow">↕ workers</div>
-      <div class="guide-step guide-t3">
-        <span class="guide-tier">T3</span>
-        <strong>memories</strong>
-        <span class="guide-sub">cross-session · profile · preferences · entities · events</span>
-      </div>
-      <div class="guide-arrow">rollup · many sessions</div>
-      <div class="guide-step guide-t2">
-        <span class="guide-tier">T2</span>
-        <strong>scenes</strong>
-        <span class="guide-sub">“what we were doing” in one chat</span>
-      </div>
-      <div class="guide-arrow">aggregate · one session</div>
-      <div class="guide-step guide-t1">
-        <span class="guide-tier">T1</span>
-        <strong>atoms</strong>
-        <span class="guide-sub">typed facts extracted from turns</span>
-      </div>
-      <div class="guide-arrow">extract · one session</div>
-      <div class="guide-step guide-t0">
-        <span class="guide-tier">T0</span>
-        <strong>session_turns</strong>
-        <span class="guide-sub">one user + assistant pair per row</span>
-      </div>
-      <div class="guide-arrow">hook upload</div>
-      <div class="guide-step guide-session">
-        <span class="guide-tier">session</span>
-        <strong>sessions</strong>
-        <span class="guide-sub">one agent conversation · <code>session_key</code> = agent UUID</span>
-      </div>
+      <div class="guide-step"><span class="guide-tier">session</span><strong>sessions</strong><span class="guide-sub">one agent conversation</span></div>
+      <div class="guide-arrow">↓ hook upload</div>
+      <div class="guide-step"><span class="guide-tier">T0</span><strong>session_turns</strong><span class="guide-sub">user + assistant pair</span></div>
+      <div class="guide-arrow">↓ T1 extract</div>
+      <div class="guide-step"><span class="guide-tier">T1</span><strong>atoms</strong><span class="guide-sub">typed facts</span></div>
+      <div class="guide-arrow">↓ T2</div>
+      <div class="guide-step"><span class="guide-tier">T2</span><strong>scenes</strong><span class="guide-sub">what we were doing</span></div>
+      <div class="guide-arrow">↓ T3</div>
+      <div class="guide-step"><span class="guide-tier">T3</span><strong>memories</strong><span class="guide-sub">profile · preferences · entities · events</span></div>
     </div>
-
     <div class="section">
-      <h3>Entity relationships</h3>
-      <div class="table-wrap">
-        <table class="guide-table">
-          <thead>
-            <tr>
-              <th>Entity</th><th>Table</th><th>Belongs to</th><th>Points at</th><th>Browse</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>Session</strong></td>
-              <td><code>sessions</code></td>
-              <td>—</td>
-              <td>many turns; optional <code>abstract</code></td>
-              <td><button type="button" class="link-btn" data-goto="sessions">Sessions</button></td>
-            </tr>
-            <tr>
-              <td><strong>Turn</strong> (T0)</td>
-              <td><code>session_turns</code></td>
-              <td>one <code>session_id</code></td>
-              <td><code>messages_jsonl</code> (raw u/a)</td>
-              <td><button type="button" class="link-btn" data-goto="sessions">open session</button></td>
-            </tr>
-            <tr>
-              <td><strong>Atom</strong> (T1)</td>
-              <td><code>atoms</code></td>
-              <td>one <code>session_id</code></td>
-              <td><code>source_turn_ids[]</code></td>
-              <td><button type="button" class="link-btn" data-goto="atoms">Atoms</button></td>
-            </tr>
-            <tr>
-              <td><strong>Scene</strong> (T2)</td>
-              <td><code>scenes</code></td>
-              <td>one <code>session_id</code></td>
-              <td><code>source_atom_uris[]</code></td>
-              <td><button type="button" class="link-btn" data-goto="scenes">Scenes</button></td>
-            </tr>
-            <tr>
-              <td><strong>Memory</strong> (T3)</td>
-              <td><code>memories</code></td>
-              <td>global (by <code>category</code>)</td>
-              <td><code>source_scene_uris[]</code></td>
-              <td><button type="button" class="link-btn" data-goto="memories">Memories</button></td>
-            </tr>
-            <tr>
-              <td><strong>Pipeline</strong></td>
-              <td><code>pipeline_state</code></td>
-              <td>one row per session</td>
-              <td>t1/t2/t3 worker flags</td>
-              <td><button type="button" class="link-btn" data-goto="pipeline">Pipeline</button></td>
-            </tr>
-            <tr>
-              <td><strong>Task</strong></td>
-              <td><code>tasks</code></td>
-              <td>optional <code>session_id</code></td>
-              <td>async job (t1/t2/t3/backfill)</td>
-              <td><button type="button" class="link-btn" data-goto="tasks">Tasks</button></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="section">
-      <h3>Memory categories (T1 atoms → T3 memories)</h3>
+      <h3>Memory categories</h3>
       <ul class="guide-list">
-        <li><code>profile</code> — singleton “who I am”</li>
-        <li><code>preferences</code> — habits, style, AI behavior rules</li>
-        <li><code>entities</code> — people, companies, projects, places</li>
-        <li><code>events</code> — dated decisions / milestones (append-only)</li>
-      </ul>
-    </div>
-
-    <div class="section">
-      <h3>What works today</h3>
-      <ul class="guide-list">
-        <li>Capture: hooks → <code>session_turns</code> (T0)</li>
-        <li>Distillation workers (T1–T3): schema ready, workers not shipped yet</li>
-        <li>URI examples:
-          <code>mypast://sessions/&lt;uuid&gt;/turns/0</code>,
-          <code>mypast://preferences/coffee</code>
-        </li>
+        <li><code>profile</code> — singleton identity</li>
+        <li><code>preferences</code> — habits and AI behavior rules</li>
+        <li><code>entities</code> — people, companies, projects</li>
+        <li><code>events</code> — dated milestones (append-only)</li>
       </ul>
     </div>`;
-}
-
-function renderGuideSidebar() {
-  return `
-    <h2 style="margin-top:0;font-size:0.95rem">Quick map</h2>
-    <p class="guide-side">
-      <strong>Inside one chat:</strong><br />
-      session → turns → atoms → scenes<br /><br />
-      <strong>Across chats:</strong><br />
-      scenes → memories<br /><br />
-      <strong>Orchestration:</strong><br />
-      pipeline_state schedules work;<br />
-      tasks record each run.
-    </p>
-    <p class="uri" style="margin-top:1rem">Full design: docs/design-l0-l4.md</p>`;
 }
 
 function wireGuideNav(root) {
   root.querySelectorAll("[data-goto]").forEach((btn) => {
     btn.addEventListener("click", () => switchTab(btn.dataset.goto));
+  });
+}
+
+function filterAtoms(items) {
+  const { q, category } = state.atomsFilter;
+  const needle = q.trim().toLowerCase();
+  return items.filter((row) => {
+    const cat = (field(row, "category", "Category") || "").toLowerCase();
+    if (category !== "all" && cat !== category) return false;
+    if (!needle) return true;
+    const content = (field(row, "content", "Content") || "").toLowerCase();
+    const slug = (field(row, "slug", "Slug") || "").toLowerCase();
+    const scene = (field(row, "scene_name", "SceneName") || "").toLowerCase();
+    const uri = (field(row, "uri", "URI") || "").toLowerCase();
+    return (
+      content.includes(needle) ||
+      slug.includes(needle) ||
+      scene.includes(needle) ||
+      uri.includes(needle)
+    );
+  });
+}
+
+function renderAtomTableRows(items, selectedIdx) {
+  if (!items.length) {
+    return `<tr><td colspan="5" class="empty" style="padding:2rem;text-align:center">No atoms match your filters</td></tr>`;
+  }
+  return items
+    .map((row, i) => {
+      const content = field(row, "content", "Content") || "—";
+      const category = field(row, "category", "Category");
+      const scene = field(row, "scene_name", "SceneName");
+      const slug = field(row, "slug", "Slug");
+      const priority = field(row, "priority", "Priority") ?? "—";
+      const uri = field(row, "uri", "URI");
+      const created = field(row, "created_at", "CreatedAt");
+      const sessionShort = sessionKeyFromURI(uri) || "—";
+      const topicParts = [scene, slug].filter(Boolean);
+      const topic = topicParts.length ? topicParts.join(" · ") : "—";
+      const priClass = Number(priority) >= 70 ? " high" : "";
+      const selected = selectedIdx === i ? " selected" : "";
+
+      return `
+        <tr data-idx="${i}" class="${selected}">
+          <td>
+            <div class="cell-primary cell-clamp-2">${esc(content)}</div>
+          </td>
+          <td>${categoryBadge(category)}</td>
+          <td>
+            <div class="cell-secondary">${esc(topic)}</div>
+          </td>
+          <td><span class="cell-mono" title="${esc(uri)}">${esc(sessionShort)}</span></td>
+          <td>
+            <span class="priority-pill${priClass}">${esc(priority)}</span>
+            <div class="cell-meta">${fmtTimeShort(created)}</div>
+          </td>
+        </tr>`;
+    })
+    .join("");
+}
+
+function renderAtomDetailCard(row) {
+  if (!row) return "";
+  const content = field(row, "content", "Content");
+  const uri = field(row, "uri", "URI");
+  const category = field(row, "category", "Category");
+  const scene = field(row, "scene_name", "SceneName");
+  const slug = field(row, "slug", "Slug");
+  const priority = field(row, "priority", "Priority");
+  const created = field(row, "created_at", "CreatedAt");
+
+  return `
+    <div class="card row-detail">
+      <div class="card-content">
+        <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin-bottom:0.75rem">
+          ${categoryBadge(category)}
+          ${scene ? `<span class="badge badge-outline">${esc(scene)}</span>` : ""}
+          ${slug ? `<span class="badge badge-outline">${esc(slug)}</span>` : ""}
+          <span class="badge badge-outline">P${esc(priority ?? "—")}</span>
+        </div>
+        <p class="detail-body">${esc(content)}</p>
+        <p class="detail-uri">${esc(uri)}</p>
+        <p class="cell-meta" style="margin-top:0.5rem">${fmtTime(created)}</p>
+      </div>
+    </div>`;
+}
+
+async function renderAtomsPanel(p) {
+  const { items: all } = await api("/atoms");
+  const filtered = filterAtoms(all);
+
+  p.innerHTML = `
+    ${pageHeader("Atoms", "Facts extracted from chat turns (T1).")}
+    <div class="card data-table-card">
+      <div class="card-content" style="padding:1rem 1.5rem 0">
+        <div class="toolbar">
+          <input type="search" class="input" id="atoms-search" placeholder="Search facts…" value="${esc(state.atomsFilter.q)}" />
+          <select class="select" id="atoms-category" aria-label="Category filter">
+            <option value="all"${state.atomsFilter.category === "all" ? " selected" : ""}>All categories</option>
+            <option value="profile"${state.atomsFilter.category === "profile" ? " selected" : ""}>profile</option>
+            <option value="preferences"${state.atomsFilter.category === "preferences" ? " selected" : ""}>preferences</option>
+            <option value="entities"${state.atomsFilter.category === "entities" ? " selected" : ""}>entities</option>
+            <option value="events"${state.atomsFilter.category === "events" ? " selected" : ""}>events</option>
+          </select>
+          <span class="toolbar-spacer"></span>
+          <span class="toolbar-meta">${filtered.length} of ${all.length}</span>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="min-width:14rem">Fact</th>
+              <th>Category</th>
+              <th>Topic</th>
+              <th>Session</th>
+              <th>Priority · When</th>
+            </tr>
+          </thead>
+          <tbody id="atoms-tbody">
+            ${renderAtomTableRows(filtered, state.selectedRowIdx)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div id="row-detail"></div>`;
+
+  const searchEl = p.querySelector("#atoms-search");
+  const catEl = p.querySelector("#atoms-category");
+
+  const applyFilters = () => {
+    state.atomsFilter.q = searchEl.value;
+    state.atomsFilter.category = catEl.value;
+    state.selectedRowIdx = null;
+    const next = filterAtoms(all);
+    p.querySelector("#atoms-tbody").innerHTML = renderAtomTableRows(next, null);
+    p.querySelector(".toolbar-meta").textContent = `${next.length} of ${all.length}`;
+    p.querySelector("#row-detail").innerHTML = "";
+    wireAtomRows(p, next);
+  };
+
+  searchEl.addEventListener("input", applyFilters);
+  catEl.addEventListener("change", applyFilters);
+  wireAtomRows(p, filtered);
+}
+
+function wireAtomRows(root, items) {
+  root.querySelectorAll("#atoms-tbody tr[data-idx]").forEach((tr) => {
+    tr.addEventListener("click", () => {
+      const idx = Number(tr.dataset.idx);
+      state.selectedRowIdx = idx;
+      root.querySelectorAll("#atoms-tbody tr.selected").forEach((r) => r.classList.remove("selected"));
+      tr.classList.add("selected");
+      root.querySelector("#row-detail").innerHTML = renderAtomDetailCard(items[idx]);
+    });
+  });
+
+  if (state.selectedRowIdx != null && items[state.selectedRowIdx]) {
+    const tr = root.querySelector(`#atoms-tbody tr[data-idx="${state.selectedRowIdx}"]`);
+    tr?.classList.add("selected");
+    root.querySelector("#row-detail").innerHTML = renderAtomDetailCard(items[state.selectedRowIdx]);
+  }
+}
+
+function renderMemoriesPanel(p, items) {
+  p.innerHTML = `
+    ${pageHeader("Memories", "Long-term knowledge (T3).")}
+    <div class="card data-table-card">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Memory</th><th>Category</th><th>Slug</th><th>Version</th><th>Updated</th></tr>
+          </thead>
+          <tbody>
+            ${items.length
+              ? items
+                  .map((row, i) => {
+                    const abstract = field(row, "abstract", "Abstract");
+                    const body = field(row, "body", "Body");
+                    const primary = abstract || truncate(body, 120) || "—";
+                    const secondary = abstract && body ? truncate(body, 80) : "";
+                    return `
+                <tr data-idx="${i}">
+                  <td>
+                    <div class="cell-primary cell-clamp-2">${esc(primary)}</div>
+                    ${secondary ? `<div class="cell-secondary">${esc(secondary)}</div>` : ""}
+                  </td>
+                  <td>${categoryBadge(field(row, "category", "Category"))}</td>
+                  <td class="cell-mono">${esc(field(row, "slug", "Slug") || "—")}</td>
+                  <td class="cell-meta">${esc(field(row, "version", "Version") ?? "—")}</td>
+                  <td class="cell-meta">${fmtTimeShort(field(row, "updated_at", "UpdatedAt"))}</td>
+                </tr>`;
+                  })
+                  .join("")
+              : `<tr><td colspan="5" class="empty" style="padding:2rem;text-align:center">No memories yet</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div id="row-detail"></div>`;
+  wireGenericRowDetail(p, items, (row) => {
+    const body = field(row, "body", "Body");
+    const abstract = field(row, "abstract", "Abstract");
+    return body || abstract;
+  });
+}
+
+function renderScenesPanel(p, items) {
+  p.innerHTML = `
+    ${pageHeader("Scenes", "Session-level summaries (T2).")}
+    <div class="card data-table-card">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Scene</th><th>Session</th><th>Updated</th></tr>
+          </thead>
+          <tbody>
+            ${items.length
+              ? items
+                  .map((row, i) => {
+                    const abstract = field(row, "abstract", "Abstract");
+                    const body = field(row, "body", "Body");
+                    const uri = field(row, "uri", "URI");
+                    return `
+                <tr data-idx="${i}">
+                  <td>
+                    <div class="cell-primary cell-clamp-2">${esc(abstract || truncate(body, 100) || "—")}</div>
+                    <div class="cell-secondary cell-mono">${esc(truncate(uri, 48))}</div>
+                  </td>
+                  <td class="cell-mono">${esc(sessionKeyFromURI(uri) || "—")}</td>
+                  <td class="cell-meta">${fmtTimeShort(field(row, "updated_at", "UpdatedAt"))}</td>
+                </tr>`;
+                  })
+                  .join("")
+              : `<tr><td colspan="3" class="empty" style="padding:2rem;text-align:center">No scenes yet</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div id="row-detail"></div>`;
+  wireGenericRowDetail(p, items, (row) => field(row, "body", "Body") || field(row, "abstract", "Abstract"));
+}
+
+function renderTasksPanel(p, items) {
+  p.innerHTML = `
+    ${pageHeader("Tasks", "Async worker runs.")}
+    <div class="card data-table-card">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Job</th><th>Status</th><th>Session</th><th>Progress</th><th>Created</th></tr>
+          </thead>
+          <tbody>
+            ${items
+              .map((row, i) => {
+                const kind = field(row, "kind", "Kind");
+                const status = field(row, "status", "Status");
+                const err = field(row, "error", "Error");
+                const sid = field(row, "session_id", "SessionID");
+                const sessionShort = sid ? String(sid).slice(0, 8) + "…" : "—";
+                return `
+              <tr data-idx="${i}">
+                <td>
+                  <div class="cell-primary">${esc(kind)}</div>
+                  ${err ? `<div class="cell-secondary cell-clamp-2">${esc(err)}</div>` : ""}
+                </td>
+                <td>${statusBadge(status)}</td>
+                <td class="cell-mono">${esc(sessionShort)}</td>
+                <td class="cell-meta">${esc(field(row, "progress", "Progress") ?? 0)}%</td>
+                <td class="cell-meta">${fmtTimeShort(field(row, "created_at", "CreatedAt"))}</td>
+              </tr>`;
+              })
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div id="row-detail"></div>`;
+  wireGenericRowDetail(p, items, (row) => field(row, "error", "Error"));
+}
+
+function renderPipelinePanel(p, items) {
+  p.innerHTML = `
+    ${pageHeader("Pipeline", "Per-session worker state.")}
+    <div class="card data-table-card">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Session</th><th>T1</th><th>T2</th><th>T3</th><th>Warmup</th></tr>
+          </thead>
+          <tbody>
+            ${items
+              .map((row, i) => {
+                const sid = field(row, "session_id", "SessionID");
+                return `
+              <tr data-idx="${i}">
+                <td class="cell-mono">${esc(sid ? String(sid).slice(0, 8) + "…" : "—")}</td>
+                <td>${statusBadge(field(row, "t1_status", "T1Status"))}</td>
+                <td>${statusBadge(field(row, "t2_status", "T2Status"))}</td>
+                <td>${statusBadge(field(row, "t3_status", "T3Status"))}</td>
+                <td class="cell-meta">${esc(field(row, "warmup_threshold", "WarmupThreshold") ?? "—")}</td>
+              </tr>`;
+              })
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function wireGenericRowDetail(root, items, textFn) {
+  root.querySelectorAll("tbody tr[data-idx]").forEach((tr) => {
+    tr.addEventListener("click", () => {
+      const idx = Number(tr.dataset.idx);
+      const text = textFn(items[idx]);
+      root.querySelectorAll("tbody tr.selected").forEach((r) => r.classList.remove("selected"));
+      tr.classList.add("selected");
+      const el = root.querySelector("#row-detail");
+      if (!text || !el) {
+        if (el) el.innerHTML = "";
+        return;
+      }
+      el.innerHTML = `
+        <div class="card row-detail">
+          <div class="card-content">
+            <p class="detail-body">${esc(text)}</p>
+          </div>
+        </div>`;
+    });
   });
 }
 
@@ -291,7 +560,6 @@ async function renderPanel() {
 
   if (state.tab === "guide") {
     p.innerHTML = renderGuideHTML();
-    detail().innerHTML = renderGuideSidebar();
     wireGuideNav(p);
     return;
   }
@@ -300,48 +568,61 @@ async function renderPanel() {
     if (!state.overview) await loadOverviewCounts();
     const c = state.overview.counts;
     p.innerHTML = `
-      <h2>Overview</h2>
-      <div class="cards">
+      ${pageHeader("Overview", "Row counts across the pipeline.")}
+      <div class="stats-grid">
         ${Object.entries(c)
           .map(
             ([k, v]) => `
-          <div class="card"><div class="label">${esc(k)}</div><div class="value">${v}</div></div>`
+          <div class="stat-card">
+            <div class="label">${esc(k.replace(/_/g, " "))}</div>
+            <div class="value">${v}</div>
+          </div>`
           )
           .join("")}
       </div>
       <p class="empty">
         <button type="button" class="link-btn" data-goto-guide>Read the Guide</button>
-        for how sessions, turns, atoms, scenes, and memories relate — or use the sidebar to browse tables.
+        or open <strong>Atoms</strong> to browse extracted facts.
       </p>`;
     p.querySelector("[data-goto-guide]")?.addEventListener("click", () => switchTab("guide"));
+    return;
+  }
+
+  if (state.tab === "atoms") {
+    await renderAtomsPanel(p);
     return;
   }
 
   if (state.tab === "sessions") {
     const { items } = await api("/sessions");
     p.innerHTML = `
-      <h2>Sessions (${items.length})</h2>
-      <div class="table-wrap">
-        <table>
-          <thead><tr>
-            <th>Key</th><th>Title</th><th>Turns</th><th>Status</th><th>Updated</th>
-          </tr></thead>
-          <tbody>
-            ${items
-              .map(
-                (s) => `
-              <tr data-key="${esc(s.session_key)}" class="${state.selectedKey === s.session_key ? "selected" : ""}">
-                <td class="uri">${esc(s.session_key.slice(0, 8))}…</td>
-                <td>${esc(s.title || "—")}</td>
-                <td>${s.turn_count}</td>
-                <td>${esc(s.status)}</td>
-                <td>${fmtTime(s.updated_at)}</td>
-              </tr>`
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>`;
+      ${pageHeader("Sessions", "Agent conversations and captured turns.")}
+      <div class="card data-table-card">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr><th>Session</th><th>Turns</th><th>Status</th><th>Updated</th></tr>
+            </thead>
+            <tbody>
+              ${items
+                .map(
+                  (s) => `
+                <tr data-key="${esc(s.session_key)}" class="${state.selectedKey === s.session_key ? "selected" : ""}">
+                  <td>
+                    <div class="cell-primary">${esc(s.title || "Untitled session")}</div>
+                    <div class="cell-secondary cell-mono">${esc(s.session_key.slice(0, 8))}…</div>
+                  </td>
+                  <td class="cell-meta">${s.turn_count}</td>
+                  <td>${statusBadge(s.status)}</td>
+                  <td class="cell-meta">${fmtTimeShort(s.updated_at)}</td>
+                </tr>`
+                )
+                .join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div id="session-detail"></div>`;
     p.querySelectorAll("tbody tr").forEach((tr) => {
       tr.addEventListener("click", () => openSession(tr.dataset.key));
     });
@@ -349,50 +630,26 @@ async function renderPanel() {
     return;
   }
 
-  if (!tab.path) {
-    return;
-  }
+  if (!tab?.path) return;
 
   const { items } = await api(tab.path);
-  const cols = items.length ? Object.keys(items[0]) : [];
-  const skip = new Set(["messages_jsonl", "body", "content", "source_turn_ids", "source_atom_uris", "source_scene_uris"]);
 
-  p.innerHTML = `
-    <h2>${esc(tab.label)} (${items.length})</h2>
-    <div class="table-wrap">
-      <table>
-        <thead><tr>${cols
-          .filter((c) => !skip.has(c))
-          .map((c) => `<th>${esc(c)}</th>`)
-          .join("")}</tr></thead>
-        <tbody>
-          ${items
-            .map(
-              (row, i) => `
-            <tr data-idx="${i}">
-              ${cols
-                .filter((c) => !skip.has(c))
-                .map((c) => {
-                  let v = row[c];
-                  if (v && typeof v === "object") v = JSON.stringify(v);
-                  if (c === "uri") return `<td class="uri">${esc(v)}</td>`;
-                  return `<td>${esc(v ?? "—")}</td>`;
-                })
-                .join("")}
-            </tr>`
-            )
-            .join("")}
-        </tbody>
-      </table>
-    </div>`;
-
-  p.querySelectorAll("tbody tr").forEach((tr) => {
-    tr.addEventListener("click", () => {
-      p.querySelectorAll("tr.selected").forEach((r) => r.classList.remove("selected"));
-      tr.classList.add("selected");
-      detail().innerHTML = `<pre class="json">${esc(JSON.stringify(items[Number(tr.dataset.idx)], null, 2))}</pre>`;
-    });
-  });
+  if (state.tab === "memories") {
+    renderMemoriesPanel(p, items);
+    return;
+  }
+  if (state.tab === "scenes") {
+    renderScenesPanel(p, items);
+    return;
+  }
+  if (state.tab === "tasks") {
+    renderTasksPanel(p, items);
+    return;
+  }
+  if (state.tab === "pipeline") {
+    renderPipelinePanel(p, items);
+    return;
+  }
 }
 
 async function openSession(sessionKey, scrollPanel = true) {
@@ -400,56 +657,72 @@ async function openSession(sessionKey, scrollPanel = true) {
   showStatus("");
   const data = await api("/sessions/" + encodeURIComponent(sessionKey));
   const s = data.session;
+  const p = panel();
 
-  panel().querySelectorAll("tbody tr").forEach((tr) => {
+  p.querySelectorAll("tbody tr").forEach((tr) => {
     tr.classList.toggle("selected", tr.dataset.key === sessionKey);
   });
+
+  const sessionDetail = p.querySelector("#session-detail");
+  if (!sessionDetail) return;
 
   const ps = data.pipeline_state;
   const pipelineHTML = ps
     ? `<div class="pipeline-grid">
-        <div><span>T1</span>${esc(ps.t1_status)}</div>
-        <div><span>T2</span>${esc(ps.t2_status)}</div>
-        <div><span>T3</span>${esc(ps.t3_status)}</div>
+        <div><span>T1</span>${statusBadge(ps.t1_status)}</div>
+        <div><span>T2</span>${statusBadge(ps.t2_status)}</div>
+        <div><span>T3</span>${statusBadge(ps.t3_status)}</div>
       </div>
-      <p style="font-family:var(--mono);font-size:0.72rem;color:var(--muted)">warmup_threshold: ${ps.warmup_threshold}</p>`
-    : '<p class="empty">No pipeline_state row</p>';
+      <p class="cell-meta" style="margin-top:0.5rem">warmup_threshold: ${esc(ps.warmup_threshold)}</p>`
+    : '<p class="empty">No pipeline state</p>';
 
-  detail().innerHTML = `
-    <h2 style="margin-top:0;font-size:0.95rem">${esc(s.title || s.session_key)}</h2>
-    <p class="uri">${esc(s.uri)}</p>
-    <div class="section">
-      <h3>Session</h3>
-      <pre class="json">${esc(JSON.stringify(s, null, 2))}</pre>
-    </div>
-    <div class="section">
-      <h3>Pipeline state</h3>
-      ${pipelineHTML}
-      ${ps ? `<pre class="json">${esc(JSON.stringify(ps, null, 2))}</pre>` : ""}
-    </div>
-    <div class="section">
-      <h3>Turns (${data.turns.length})</h3>
-      ${data.turns
-        .map(
-          (t) => `
-        <details class="turn">
-          <summary>#${t.turn_index} · ${esc(t.turn_status)} · ${fmtTime(t.created_at)}</summary>
-          <div class="messages">${renderMessages(t.messages_jsonl)}</div>
-        </details>`
-        )
-        .join("")}
-    </div>
-    <div class="section">
-      <h3>Session atoms (${data.atoms.length})</h3>
-      ${
-        data.atoms.length
-          ? `<pre class="json">${esc(JSON.stringify(data.atoms, null, 2))}</pre>`
-          : '<p class="empty">None yet</p>'
-      }
+  const atomsTable =
+    data.atoms.length > 0
+      ? `<div class="table-wrap" style="margin-top:0.75rem">
+          <table class="data-table">
+            <thead><tr><th>Fact</th><th>Category</th><th>Topic</th></tr></thead>
+            <tbody>${data.atoms
+              .map((a) => {
+                const topic = [field(a, "scene_name", "SceneName"), field(a, "slug", "Slug")]
+                  .filter(Boolean)
+                  .join(" · ");
+                return `<tr>
+                  <td><div class="cell-primary cell-clamp-2">${esc(field(a, "content", "Content"))}</div></td>
+                  <td>${categoryBadge(field(a, "category", "Category"))}</td>
+                  <td class="cell-secondary">${esc(topic || "—")}</td>
+                </tr>`;
+              })
+              .join("")}</tbody>
+          </table>
+        </div>`
+      : '<p class="empty">No atoms yet</p>';
+
+  sessionDetail.innerHTML = `
+    <div class="card row-detail" style="margin-top:1rem">
+      <div class="card-header">
+        <h3 class="card-title">${esc(s.title || s.session_key)}</h3>
+        <p class="card-description cell-mono">${esc(s.uri)}</p>
+      </div>
+      <div class="card-content">
+        <h3 style="font-size:0.875rem;font-weight:600;margin:0 0 0.5rem">Pipeline</h3>
+        ${pipelineHTML}
+        <h3 style="font-size:0.875rem;font-weight:600;margin:1.25rem 0 0.5rem">Turns (${data.turns.length})</h3>
+        ${data.turns
+          .map(
+            (t) => `
+          <details class="turn">
+            <summary>#${t.turn_index} · ${esc(t.turn_status)} · ${fmtTime(t.created_at)}</summary>
+            <div class="messages">${renderMessages(t.messages_jsonl)}</div>
+          </details>`
+          )
+          .join("")}
+        <h3 style="font-size:0.875rem;font-weight:600;margin:1.25rem 0 0.5rem">Atoms (${data.atoms.length})</h3>
+        ${atomsTable}
+      </div>
     </div>`;
 
   if (scrollPanel) {
-    detail().scrollIntoView({ behavior: "smooth", block: "nearest" });
+    sessionDetail.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 }
 
@@ -465,7 +738,6 @@ async function refresh() {
 
 $("#refresh-btn").addEventListener("click", refresh);
 
-// Default to Guide on first visit
 if (!sessionStorage.getItem("mypast-ui-seen")) {
   state.tab = "guide";
   sessionStorage.setItem("mypast-ui-seen", "1");

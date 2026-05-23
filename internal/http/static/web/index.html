@@ -1,37 +1,33 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MyPast — Observer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="shell">
     <header class="top">
       <div class="brand">
-        <span class="brand-mark">◈</span>
+        <div class="brand-icon" aria-hidden="true">M</div>
         <div>
           <h1>MyPast Observer</h1>
           <p class="tagline">sessions → turns → atoms → scenes → memories</p>
         </div>
       </div>
-      <button type="button" id="refresh-btn" class="btn">Refresh</button>
+      <button type="button" id="refresh-btn" class="btn btn-outline btn-sm">Refresh</button>
     </header>
 
-    <aside class="nav" id="nav"></aside>
+    <aside class="nav" id="nav" aria-label="Main navigation"></aside>
 
     <main class="main">
-      <div id="status" class="status" hidden></div>
+      <div id="status" class="alert alert-destructive" hidden role="alert"></div>
       <div id="panel" class="panel"></div>
     </main>
-
-    <aside class="detail" id="detail">
-      <p class="detail-placeholder">Select a row to inspect</p>
-    </aside>
   </div>
   <script src="app.js"></script>
 </body>
