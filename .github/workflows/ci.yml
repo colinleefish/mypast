@@ -6,6 +6,7 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -13,7 +14,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: [self-hosted, linux, liguanghui]
+    runs-on: [self-hosted, liguanghui]
     env:
       GOPROXY: https://goproxy.cn,direct
     steps:
