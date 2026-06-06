@@ -8,6 +8,7 @@ import (
 
 	"github.com/colinleefish/mypast/internal/config"
 	"github.com/colinleefish/mypast/internal/db"
+	"github.com/colinleefish/mypast/internal/db/pgarray"
 	"github.com/colinleefish/mypast/internal/model"
 	"github.com/colinleefish/mypast/internal/service/session"
 	"github.com/colinleefish/mypast/internal/uri"
@@ -257,7 +258,7 @@ func (w *Worker) persistScenes(
 				DisplayName:    &displayName,
 				Abstract:       &abstract,
 				Body:           &body,
-				SourceAtomURIs: append([]string(nil), s.SourceAtomURIs...),
+				SourceAtomURIs: pgarray.TextArray(append([]string(nil), s.SourceAtomURIs...)),
 				CreatedAt:      now,
 				UpdatedAt:      now,
 			}

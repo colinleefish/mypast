@@ -3,6 +3,7 @@ package model
 import (
 	"time"
 
+	"github.com/colinleefish/mypast/internal/db/pgarray"
 	"github.com/google/uuid"
 )
 
@@ -15,7 +16,7 @@ type Memory struct {
 	SupersededAt    *time.Time `gorm:"column:superseded_at;type:timestamptz"`
 	Abstract        *string    `gorm:"column:abstract;type:text"`
 	Body            *string    `gorm:"column:body;type:text"`
-	SourceSceneURIs []string   `gorm:"column:source_scene_uris;type:text[];not null"`
+	SourceSceneURIs pgarray.TextArray `gorm:"column:source_scene_uris;type:text[];not null"`
 	CreatedAt       time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
 	UpdatedAt       time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
 }
