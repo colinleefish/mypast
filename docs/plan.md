@@ -29,7 +29,7 @@ Workers move data **up** the pyramid on a schedule (not every hook). T0 is never
 | **Design lock** — append-first, versioning     | ✅ Done         | §6.1 in design doc; review doc updated        |
 | **Phase B+** — `memories` versioning migration | ✅ Done (early) | `00003` applied on prod before T3 code exists |
 | **Phase B** — T1 worker                        | ✅ Done         | `MYPAST_EXTRACTION_*`; `mypast t1 backfill`   |
-| **Phase C** — T2 worker                        | 🔲 Planned      | Scenes + `sessions.abstract`                  |
+| **Phase C** — T2 worker                        | ✅ Done         | `MYPAST_SCENE_*`; `mypast t2 backfill`        |
 | **Phase D** — T3 worker + `mypast eval`        | 🔲 Planned      | Long-term memories                            |
 | **Phase E** — retire legacy summarizer         | 🔲 Planned      | Drop `overview_text` path                     |
 | **Retrieval** — `find` / `search`              | 🔲 Later        | Design §10                                    |

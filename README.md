@@ -13,6 +13,8 @@ What works today:
   Cursor and Claude Code, with race-free user/assistant pairing.
 - **T1 extraction worker** (Phase B): async atom extraction from turns into
   `atoms` (append-only; `MYPAST_EXTRACTION_ENABLED=true` by default).
+- **T2 scene worker** (Phase C): groups atoms into `scenes` and writes
+  `sessions.abstract` (`MYPAST_SCENE_ENABLED=true` by default).
 - Legacy summarizer (`overview_text`) is off by default (`MYPAST_SUMMARIZER_ENABLED=false`).
 
 Inspection CLI: `mypast cat`, `mypast tree`, `mypast meta` (Phase A).

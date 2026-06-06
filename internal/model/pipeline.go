@@ -7,6 +7,7 @@ const (
 	PipelineStatusFailed  = "failed"
 
 	TaskKindT1       = "t1"
+	TaskKindT2       = "t2"
 	TaskStatusPending  = "pending"
 	TaskStatusRunning  = "running"
 	TaskStatusDone     = "done"

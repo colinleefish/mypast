@@ -24,6 +24,7 @@ type Config struct {
 	LLM        LLMConfig
 	Summarizer SummarizerConfig
 	Extraction ExtractionConfig
+	Scene      SceneConfig
 }
 
 type AuthConfig struct {
@@ -73,6 +74,13 @@ type ExtractionConfig struct {
 	MaxCharsPerBatch int
 }
 
+type SceneConfig struct {
+	Enabled       bool
+	PollInterval  time.Duration
+	DelayAfterT1  time.Duration
+	BatchSessions int
+}
+
 type fileConfig struct {
 	DB struct {
 		URL string `toml:"url"`
@@ -111,6 +119,12 @@ type fileConfig struct {
 		MaxTurnsPerBatch *int   `toml:"max_turns_per_batch"`
 		MaxCharsPerBatch *int   `toml:"max_chars_per_batch"`
 	} `toml:"extraction"`
+	Scene struct {
+		Enabled       *bool  `toml:"enabled"`
+		PollInterval  string `toml:"poll_interval"`
+		DelayAfterT1  string `toml:"delay_after_t1"`
+		BatchSessions *int   `toml:"batch_sessions"`
+	} `toml:"scene"`
 }
 
 func Load() (Config, error) {
@@ -153,6 +167,12 @@ func Load() (Config, error) {
 			BatchSessions:    8,
 			MaxTurnsPerBatch: 8,
 			MaxCharsPerBatch: 24000,
+		},
+		Scene: SceneConfig{
+			Enabled:       true,
+			PollInterval:  15 * time.Second,
+			DelayAfterT1:  90 * time.Second,
+			BatchSessions: 8,
 		},
 	}
 
@@ -361,6 +381,26 @@ func loadFileConfig(cfg *Config, path string, explicitPath bool) error {
 	if fc.Extraction.MaxCharsPerBatch != nil {
 		cfg.Extraction.MaxCharsPerBatch = *fc.Extraction.MaxCharsPerBatch
 	}
+	if fc.Scene.Enabled != nil {
+		cfg.Scene.Enabled = *fc.Scene.Enabled
+	}
+	if fc.Scene.PollInterval != "" {
+		v, err := time.ParseDuration(fc.Scene.PollInterval)
+		if err != nil {
+			return fmt.Errorf("parse scene.poll_interval in %q: %w", path, err)
+		}
+		cfg.Scene.PollInterval = v
+	}
+	if fc.Scene.DelayAfterT1 != "" {
+		v, err := time.ParseDuration(fc.Scene.DelayAfterT1)
+		if err != nil {
+			return fmt.Errorf("parse scene.delay_after_t1 in %q: %w", path, err)
+		}
+		cfg.Scene.DelayAfterT1 = v
+	}
+	if fc.Scene.BatchSessions != nil {
+		cfg.Scene.BatchSessions = *fc.Scene.BatchSessions
+	}
 
 	return nil
 }
@@ -517,6 +557,37 @@ func applyEnvOverrides(cfg *Config) error {
 			return fmt.Errorf("parse MYPAST_EXTRACTION_MAX_CHARS_PER_BATCH: %w", err)
 		}
 		cfg.Extraction.MaxCharsPerBatch = parsed
+	}
+	if v := os.Getenv("MYPAST_SCENE_ENABLED"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			cfg.Scene.Enabled = true
+		case "0", "false", "no", "off":
+			cfg.Scene.Enabled = false
+		default:
+			return fmt.Errorf("parse MYPAST_SCENE_ENABLED: invalid boolean %q", v)
+		}
+	}
+	if v := os.Getenv("MYPAST_SCENE_POLL_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("parse MYPAST_SCENE_POLL_INTERVAL: %w", err)
+		}
+		cfg.Scene.PollInterval = d
+	}
+	if v := os.Getenv("MYPAST_SCENE_DELAY_AFTER_T1"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("parse MYPAST_SCENE_DELAY_AFTER_T1: %w", err)
+		}
+		cfg.Scene.DelayAfterT1 = d
+	}
+	if v := os.Getenv("MYPAST_SCENE_BATCH_SESSIONS"); v != "" {
+		parsed, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("parse MYPAST_SCENE_BATCH_SESSIONS: %w", err)
+		}
+		cfg.Scene.BatchSessions = parsed
 	}
 	return nil
 }

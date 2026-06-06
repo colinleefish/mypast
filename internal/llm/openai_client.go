@@ -157,6 +157,86 @@ func (c *OpenAICompatibleClient) ExtractAtoms(ctx context.Context, messagesJSONL
 	return out, nil
 }
 
+// BuildScenes asks the model to aggregate atoms into scene summaries.
+func (c *OpenAICompatibleClient) BuildScenes(ctx context.Context, atomsJSON string) (string, error) {
+	req := chatCompletionRequest{
+		Model:       c.model,
+		Temperature: 0.1,
+		Messages: []chatMessage{
+			{
+				Role: "system",
+				Content: "You aggregate structured memory atoms into scene summaries. " +
+					"Respond with a single JSON object only: {\"scenes\":[...]}. " +
+					"Each scene has display_name (short label), abstract (~100 tokens, plain text), " +
+					"body (Markdown, factual, only from input atoms), atom_uris (subset of input URIs). " +
+					"Emit one scene per distinct scene_name group in the input. " +
+					"Do not invent facts or URIs not present in the input.",
+			},
+			{
+				Role:    "user",
+				Content: buildBuildScenesPrompt(atomsJSON),
+			},
+		},
+	}
+	out, err := c.completeWithRetry(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("llm build scenes failed: %w", err)
+	}
+	return out, nil
+}
+
+// SummarizeSessionAbstract derives a short session abstract from scene abstracts.
+func (c *OpenAICompatibleClient) SummarizeSessionAbstract(
+	ctx context.Context,
+	sceneAbstracts string,
+) (string, error) {
+	req := chatCompletionRequest{
+		Model:       c.model,
+		Temperature: 0.2,
+		Messages: []chatMessage{
+			{
+				Role: "system",
+				Content: "You write concise session summaries. Return plain text only, " +
+					"at most 100 tokens. Preserve key facts from the scene abstracts.",
+			},
+			{
+				Role:    "user",
+				Content: buildSessionAbstractPrompt(sceneAbstracts),
+			},
+		},
+	}
+	out, err := c.completeWithRetry(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("llm summarize session abstract failed: %w", err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+func buildBuildScenesPrompt(atomsJSON string) string {
+	chunk := strings.TrimSpace(atomsJSON)
+	if chunk == "" {
+		chunk = "(empty)"
+	}
+	return strings.TrimSpace(`Aggregate these memory atoms into scene summaries.
+
+Return JSON only:
+{"scenes":[{"display_name":"...","abstract":"...","body":"...","atom_uris":["mypast://..."]}]}
+
+Input atoms (JSON):
+` + chunk)
+}
+
+func buildSessionAbstractPrompt(sceneAbstracts string) string {
+	chunk := strings.TrimSpace(sceneAbstracts)
+	if chunk == "" {
+		chunk = "(empty)"
+	}
+	return strings.TrimSpace(`Write a single session abstract from these scene abstracts.
+
+Scene abstracts:
+` + chunk)
+}
+
 func (c *OpenAICompatibleClient) completeWithRetry(
 	ctx context.Context,
 	req chatCompletionRequest,

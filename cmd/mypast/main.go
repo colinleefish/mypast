@@ -18,6 +18,7 @@ import (
 	"github.com/colinleefish/mypast/internal/service/browse"
 	"github.com/colinleefish/mypast/internal/service/health"
 	"github.com/colinleefish/mypast/internal/service/extract"
+	"github.com/colinleefish/mypast/internal/service/scene"
 	"github.com/colinleefish/mypast/internal/service/session"
 	"github.com/colinleefish/mypast/internal/service/summarize"
 )
@@ -51,7 +52,7 @@ func main() {
 			healthSvc := health.NewService(database)
 			sessionUploadSvc := session.NewUploadService(database)
 
-			if cfg.Extraction.Enabled || cfg.Summarizer.Enabled {
+			if cfg.Extraction.Enabled || cfg.Scene.Enabled || cfg.Summarizer.Enabled {
 				llmClient, err := llm.NewOpenAICompatibleClient(llm.OpenAICompatibleConfig{
 					Provider:   cfg.LLM.Provider,
 					APIBase:    cfg.LLM.APIBase,
@@ -71,6 +72,15 @@ func main() {
 						go func() {
 							if err := t1Worker.Run(ctx); err != nil {
 								log.Printf("t1 extraction worker exited with error: %v", err)
+							}
+						}()
+					}
+
+					if cfg.Scene.Enabled {
+						t2Worker := scene.NewWorker(database, llmClient, cfg.Scene)
+						go func() {
+							if err := t2Worker.Run(ctx); err != nil {
+								log.Printf("t2 scene worker exited with error: %v", err)
 							}
 						}()
 					}

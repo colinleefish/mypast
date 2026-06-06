@@ -12,6 +12,7 @@ import (
 	"github.com/colinleefish/mypast/internal/hook"
 	"github.com/colinleefish/mypast/internal/service/extract"
 	"github.com/colinleefish/mypast/internal/service/inspect"
+	"github.com/colinleefish/mypast/internal/service/scene"
 	"github.com/google/uuid"
 )
 
@@ -36,6 +37,8 @@ func (r Runner) Run(ctx context.Context, args []string) error {
 		return r.runInspect(ctx, args[0], args[1:])
 	case "t1":
 		return r.runT1(ctx, args[1:])
+	case "t2":
+		return r.runT2(ctx, args[1:])
 	case "store", "read", "list", "delete", "search", "load-context":
 		return fmt.Errorf("%q command is planned but not implemented yet", args[0])
 	default:
@@ -119,6 +122,43 @@ func (r Runner) runT1(ctx context.Context, args []string) error {
 	return nil
 }
 
+func (r Runner) runT2(ctx context.Context, args []string) error {
+	if len(args) == 0 || args[0] != "backfill" {
+		return fmt.Errorf("usage: mypast t2 backfill [--session=<uuid>]")
+	}
+
+	sessionKey := strings.TrimSpace(parseFlagValue(args[1:], "--session"))
+
+	database, err := db.New(ctx, r.Config.DB.URL)
+	if err != nil {
+		return fmt.Errorf("db connect: %w", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		return fmt.Errorf("get db handle: %w", err)
+	}
+	defer sqlDB.Close()
+
+	if err := db.Migrate(ctx, database); err != nil {
+		return fmt.Errorf("db migrate: %w", err)
+	}
+
+	if sessionKey != "" {
+		if err := scene.EnqueueSessionByKey(ctx, database, sessionKey); err != nil {
+			return err
+		}
+		fmt.Fprintln(r.stdout(), "enqueued t2 for session", sessionKey)
+		return nil
+	}
+
+	count, err := scene.EnqueueAllSessionsWithAtoms(ctx, database)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(r.stdout(), "enqueued t2 for %d session(s)\n", count)
+	return nil
+}
+
 func (r Runner) stdout() io.Writer {
 	if r.Stdout != nil {
 		return r.Stdout
@@ -185,6 +225,8 @@ Usage:
   mypast tree <uri-prefix>    List child URIs under a prefix
   mypast meta <uri>           Print row metadata as JSON
   mypast t1 backfill          Enqueue T1 extraction for sessions with unprocessed turns
+                              Optional: --session=<uuid>
+  mypast t2 backfill          Enqueue T2 scene build for sessions with atoms
                               Optional: --session=<uuid>
   mypast store <uri>          Planned
   mypast read <uri>           Planned
