@@ -10,9 +10,14 @@ import (
 	"os"
 	"strings"
 
+	"github.com/colinleefish/mypast/internal/db/pgarray"
 	"github.com/colinleefish/mypast/internal/service/recall"
 	"gorm.io/gorm"
 )
+
+// QueryEmbedder embeds a single query string for vector recall. When nil, eval
+// runs in FTS-only mode (no vector path).
+type QueryEmbedder func(ctx context.Context, query string) (pgarray.Vector, error)
 
 // Probe is one recall test: a natural-language query and the URI prefix the
 // answer is expected to live under (optional).
@@ -103,11 +108,13 @@ func classify(probe Probe, full, baseline []recall.Match) Result {
 	}
 }
 
-// Run executes every probe and aggregates a report.
-func Run(ctx context.Context, db *gorm.DB, probes []Probe, k int) (Report, error) {
+// Run executes every probe and aggregates a report. The full-stack path is
+// hybrid (vector + FTS over memories, fused) when embed is non-nil, else FTS
+// only. Baseline is always raw-turn FTS (the "is it in the evidence" ceiling).
+func Run(ctx context.Context, db *gorm.DB, probes []Probe, k int, embed QueryEmbedder) (Report, error) {
 	var rep Report
 	for _, probe := range probes {
-		full, err := recall.FTSMemories(ctx, db, probe.Query, k)
+		full, err := fullStack(ctx, db, probe.Query, k, embed)
 		if err != nil {
 			return Report{}, err
 		}
@@ -125,4 +132,23 @@ func Run(ctx context.Context, db *gorm.DB, probes []Probe, k int) (Report, error
 		rep.Results = append(rep.Results, res)
 	}
 	return rep, nil
+}
+
+func fullStack(ctx context.Context, db *gorm.DB, query string, k int, embed QueryEmbedder) ([]recall.Match, error) {
+	fts, err := recall.FTSMemories(ctx, db, query, k)
+	if err != nil {
+		return nil, err
+	}
+	if embed == nil {
+		return fts, nil
+	}
+	vec, err := embed(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	vecMatches, err := recall.VectorMemories(ctx, db, vec, k)
+	if err != nil {
+		return nil, err
+	}
+	return recall.FuseRRF([][]recall.Match{vecMatches, fts}, 60, k), nil
 }

@@ -247,7 +247,14 @@ func (r Runner) runEval(ctx context.Context, args []string) error {
 		return fmt.Errorf("db migrate: %w", err)
 	}
 
-	report, err := eval.Run(ctx, database, probes, k)
+	// Use hybrid (vector + FTS) for the full-stack path when an embed client is
+	// configured; fall back to FTS-only otherwise.
+	var embedder eval.QueryEmbedder
+	if strings.TrimSpace(r.Config.Embed.APIKey) != "" {
+		embedder = r.embedQuery
+	}
+
+	report, err := eval.Run(ctx, database, probes, k, embedder)
 	if err != nil {
 		return err
 	}
