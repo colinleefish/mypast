@@ -1,0 +1,63 @@
+package memory
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/colinleefish/mypast/internal/model"
+	"github.com/colinleefish/mypast/internal/service/session"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+// EnqueueSession marks a session for T3 rollup (used by backfill CLI).
+func EnqueueSession(ctx context.Context, gdb *gorm.DB, sessionID uuid.UUID) error {
+	return gdb.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var ps model.PipelineState
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("session_id = ?", sessionID).
+			Take(&ps).Error
+		if err == gorm.ErrRecordNotFound {
+			return fmt.Errorf("pipeline_state not found for session %s", sessionID)
+		}
+		if err != nil {
+			return err
+		}
+		return tx.Model(&ps).Update("t3_status", model.PipelineStatusPending).Error
+	})
+}
+
+// EnqueueSessionByKey resolves session_key to id and enqueues T3.
+func EnqueueSessionByKey(ctx context.Context, gdb *gorm.DB, sessionKey string) error {
+	sessionKey, err := session.ValidateSessionKey(sessionKey)
+	if err != nil {
+		return err
+	}
+	var s model.Session
+	if err := gdb.WithContext(ctx).Where("session_key = ?", sessionKey).Take(&s).Error; err != nil {
+		return fmt.Errorf("load session: %w", err)
+	}
+	return EnqueueSession(ctx, gdb, s.ID)
+}
+
+// EnqueueAllSessionsWithScenes enqueues T3 for every session that has scenes.
+func EnqueueAllSessionsWithScenes(ctx context.Context, gdb *gorm.DB) (int, error) {
+	type row struct {
+		SessionID uuid.UUID
+	}
+	var rows []row
+	if err := gdb.WithContext(ctx).Raw(`
+		SELECT DISTINCT sc.session_id
+		FROM scenes sc
+		JOIN pipeline_state ps ON ps.session_id = sc.session_id
+	`).Scan(&rows).Error; err != nil {
+		return 0, fmt.Errorf("list sessions with scenes: %w", err)
+	}
+	for _, r := range rows {
+		if err := EnqueueSession(ctx, gdb, r.SessionID); err != nil {
+			return 0, err
+		}
+	}
+	return len(rows), nil
+}

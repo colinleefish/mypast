@@ -212,6 +212,60 @@ func (c *OpenAICompatibleClient) SummarizeSessionAbstract(
 	return strings.TrimSpace(out), nil
 }
 
+// DistillMemory rolls a category/slug bucket of atoms into a long-term memory.
+func (c *OpenAICompatibleClient) DistillMemory(
+	ctx context.Context,
+	category string,
+	slug string,
+	atomsJSON string,
+) (string, error) {
+	req := chatCompletionRequest{
+		Model:       c.model,
+		Temperature: 0.2,
+		Messages: []chatMessage{
+			{
+				Role: "system",
+				Content: "You distill durable long-term memory from structured facts. " +
+					"Respond with a single JSON object only: {\"abstract\":\"...\",\"body\":\"...\"}. " +
+					"abstract is one line (~100 tokens) for retrieval; body is factual Markdown. " +
+					"Use only the supplied facts; do not invent. Resolve contradictions in favour of the " +
+					"most recent facts. Keep stable identity/preferences/entity details; for events, list " +
+					"them as an immutable dated record.",
+			},
+			{
+				Role:    "user",
+				Content: buildDistillMemoryPrompt(category, slug, atomsJSON),
+			},
+		},
+	}
+	out, err := c.completeWithRetry(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("llm distill memory failed: %w", err)
+	}
+	return out, nil
+}
+
+func buildDistillMemoryPrompt(category, slug, atomsJSON string) string {
+	chunk := strings.TrimSpace(atomsJSON)
+	if chunk == "" {
+		chunk = "(empty)"
+	}
+	topic := strings.TrimSpace(slug)
+	if topic == "" {
+		topic = "(none)"
+	}
+	return strings.TrimSpace(`Distill these facts into a single long-term memory.
+
+category: ` + category + `
+topic/slug: ` + topic + `
+
+Return JSON only:
+{"abstract":"...","body":"..."}
+
+Facts (JSON):
+` + chunk)
+}
+
 func buildBuildScenesPrompt(atomsJSON string) string {
 	chunk := strings.TrimSpace(atomsJSON)
 	if chunk == "" {

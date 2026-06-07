@@ -15,6 +15,8 @@ What works today:
   `atoms` (append-only; `MYPAST_EXTRACTION_ENABLED=true` by default).
 - **T2 scene worker** (Phase C): groups atoms into `scenes` and writes
   `sessions.abstract` (`MYPAST_SCENE_ENABLED=true` by default).
+- **T3 memory worker** (Phase D): rolls atoms across sessions into versioned
+  long-term `memories` by category/slug (`MYPAST_MEMORY_ENABLED=true` by default).
 - Legacy summarizer (`overview_text`) is off by default (`MYPAST_SUMMARIZER_ENABLED=false`).
 
 Inspection CLI: `mypast cat`, `mypast tree`, `mypast meta` (Phase A).

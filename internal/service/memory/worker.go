@@ -1,0 +1,307 @@
+package memory
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/colinleefish/mypast/internal/config"
+	"github.com/colinleefish/mypast/internal/db"
+	"github.com/colinleefish/mypast/internal/db/pgarray"
+	"github.com/colinleefish/mypast/internal/model"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+const (
+	globalLockKey = "mypast-t3-rollup"
+	distillDelay  = 1 * time.Second
+)
+
+type MemoryDistiller interface {
+	DistillMemory(ctx context.Context, category, slug, atomsJSON string) (string, error)
+}
+
+type Worker struct {
+	db     *gorm.DB
+	llm    MemoryDistiller
+	config config.MemoryConfig
+	now    func() time.Time
+}
+
+func NewWorker(database *gorm.DB, llm MemoryDistiller, cfg config.MemoryConfig) *Worker {
+	return &Worker{
+		db:     database,
+		llm:    llm,
+		config: cfg,
+		now:    time.Now,
+	}
+}
+
+func (w *Worker) Run(ctx context.Context) error {
+	if !w.config.Enabled {
+		log.Printf("t3 memory worker disabled")
+		return nil
+	}
+	if w.llm == nil {
+		return fmt.Errorf("t3 memory worker requires llm client")
+	}
+	if w.config.PollInterval <= 0 {
+		return fmt.Errorf("invalid memory poll interval: %s", w.config.PollInterval)
+	}
+
+	log.Printf("t3 memory worker started poll_interval=%s", w.config.PollInterval)
+
+	w.runOneCycle(ctx)
+
+	ticker := time.NewTicker(w.config.PollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("t3 memory worker stopped")
+			return nil
+		case <-ticker.C:
+			w.runOneCycle(ctx)
+		}
+	}
+}
+
+// runOneCycle holds a single global advisory lock on a pinned connection so only
+// one rollup runs at a time, without keeping a long-running transaction open
+// during LLM calls.
+func (w *Worker) runOneCycle(ctx context.Context) {
+	err := w.db.WithContext(ctx).Connection(func(conn *gorm.DB) error {
+		locked, err := db.TryGlobalAdvisoryLock(conn, globalLockKey)
+		if err != nil {
+			return err
+		}
+		if !locked {
+			return nil
+		}
+		defer func() { _ = db.GlobalAdvisoryUnlock(conn, globalLockKey) }()
+		return w.rollup(ctx)
+	})
+	if err != nil {
+		log.Printf("t3 worker cycle failed: %v", err)
+	}
+}
+
+func (w *Worker) rollup(ctx context.Context) error {
+	pendingIDs, err := w.pendingSessionIDs(ctx)
+	if err != nil {
+		return err
+	}
+	if len(pendingIDs) == 0 {
+		return nil
+	}
+
+	var atoms []model.Atom
+	if err := w.db.WithContext(ctx).
+		Order("category asc, created_at asc, uri asc").
+		Find(&atoms).Error; err != nil {
+		return fmt.Errorf("load atoms: %w", err)
+	}
+
+	var scenes []model.Scene
+	if err := w.db.WithContext(ctx).
+		Select("uri", "source_atom_uris").
+		Find(&scenes).Error; err != nil {
+		return fmt.Errorf("load scenes: %w", err)
+	}
+
+	buckets, skipped := groupAtomsIntoBuckets(atoms)
+	if skipped > 0 {
+		log.Printf("t3 worker skipped %d slug-less atoms in slug categories", skipped)
+	}
+	if len(buckets) == 0 {
+		// Nothing to distill; still clear pending so they do not loop forever.
+		return w.markSessionsIdle(ctx, pendingIDs, w.now().UTC())
+	}
+
+	index := buildAtomSceneIndex(scenes)
+	incomplete := false
+
+	for _, bucket := range buckets {
+		pm, err := w.distillBucket(ctx, bucket)
+		if err != nil {
+			if isTransient(err) {
+				log.Printf("t3 worker transient error bucket=%s: %v", bucket.URI, err)
+				incomplete = true
+				break
+			}
+			log.Printf("t3 worker bucket=%s failed: %v", bucket.URI, err)
+			incomplete = true
+			continue
+		}
+
+		srcScenes := sourceSceneURIsFor(bucket, index)
+		if err := w.persistMemory(ctx, bucket, pm, srcScenes); err != nil {
+			log.Printf("t3 worker persist bucket=%s failed: %v", bucket.URI, err)
+			incomplete = true
+			continue
+		}
+		time.Sleep(distillDelay)
+	}
+
+	if incomplete {
+		log.Printf("t3 worker rollup incomplete; leaving %d sessions pending for retry", len(pendingIDs))
+		return nil
+	}
+	return w.markSessionsIdle(ctx, pendingIDs, w.now().UTC())
+}
+
+func (w *Worker) pendingSessionIDs(ctx context.Context) ([]uuid.UUID, error) {
+	type row struct {
+		SessionID uuid.UUID
+	}
+	var rows []row
+	if err := w.db.WithContext(ctx).Raw(`
+		SELECT session_id
+		FROM pipeline_state
+		WHERE t3_status = 'pending'
+	`).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("query pending t3 sessions: %w", err)
+	}
+	out := make([]uuid.UUID, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.SessionID)
+	}
+	return out, nil
+}
+
+// distillBucket produces one memory from a bucket, chunking and merging when the
+// bucket exceeds the per-call atom budget so each LLM response stays complete.
+func (w *Worker) distillBucket(ctx context.Context, bucket memoryBucket) (parsedMemory, error) {
+	chunks := chunkAtoms(bucket.Atoms, w.config.MaxAtomsPerBatch)
+
+	if len(chunks) == 1 {
+		atomsJSON, err := serializeAtomsForLLM(chunks[0])
+		if err != nil {
+			return parsedMemory{}, err
+		}
+		raw, err := w.llm.DistillMemory(ctx, bucket.Category, bucket.Slug, atomsJSON)
+		if err != nil {
+			return parsedMemory{}, err
+		}
+		return parseDistillResponse(raw)
+	}
+
+	partials := make([]string, 0, len(chunks))
+	for _, chunk := range chunks {
+		atomsJSON, err := serializeAtomsForLLM(chunk)
+		if err != nil {
+			return parsedMemory{}, err
+		}
+		raw, err := w.llm.DistillMemory(ctx, bucket.Category, bucket.Slug, atomsJSON)
+		if err != nil {
+			return parsedMemory{}, err
+		}
+		pm, err := parseDistillResponse(raw)
+		if err != nil {
+			return parsedMemory{}, err
+		}
+		partials = append(partials, pm.Body)
+		time.Sleep(distillDelay)
+	}
+
+	mergedJSON, err := serializePartialsForLLM(partials)
+	if err != nil {
+		return parsedMemory{}, err
+	}
+	raw, err := w.llm.DistillMemory(ctx, bucket.Category, bucket.Slug, mergedJSON)
+	if err != nil {
+		return parsedMemory{}, err
+	}
+	return parseDistillResponse(raw)
+}
+
+func (w *Worker) persistMemory(
+	ctx context.Context,
+	bucket memoryBucket,
+	pm parsedMemory,
+	sourceSceneURIs []string,
+) error {
+	return w.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := w.now().UTC()
+		var slugPtr *string
+		if bucket.Slug != "" {
+			slug := bucket.Slug
+			slugPtr = &slug
+		}
+
+		// events are immutable: insert once per slug, never supersede.
+		if bucket.Category == model.AtomCategoryEvents {
+			var existing int64
+			if err := tx.Model(&model.Memory{}).
+				Where("uri = ? AND superseded_at IS NULL", bucket.URI).
+				Count(&existing).Error; err != nil {
+				return fmt.Errorf("count event memory: %w", err)
+			}
+			if existing > 0 {
+				return nil
+			}
+			return insertMemory(tx, bucket, slugPtr, pm, sourceSceneURIs, 1, now)
+		}
+
+		var active model.Memory
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("uri = ? AND superseded_at IS NULL", bucket.URI).
+			Take(&active).Error
+		switch {
+		case err == gorm.ErrRecordNotFound:
+			return insertMemory(tx, bucket, slugPtr, pm, sourceSceneURIs, 1, now)
+		case err != nil:
+			return fmt.Errorf("load active memory: %w", err)
+		}
+
+		// Idempotent: skip if the distilled body is unchanged.
+		if active.Body != nil && *active.Body == pm.Body {
+			return nil
+		}
+
+		if err := tx.Model(&model.Memory{}).
+			Where("id = ?", active.ID).
+			Update("superseded_at", now).Error; err != nil {
+			return fmt.Errorf("supersede memory: %w", err)
+		}
+		return insertMemory(tx, bucket, slugPtr, pm, sourceSceneURIs, active.Version+1, now)
+	})
+}
+
+func insertMemory(
+	tx *gorm.DB,
+	bucket memoryBucket,
+	slugPtr *string,
+	pm parsedMemory,
+	sourceSceneURIs []string,
+	version int,
+	now time.Time,
+) error {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return fmt.Errorf("generate memory id: %w", err)
+	}
+	abstract := pm.Abstract
+	body := pm.Body
+	row := model.Memory{
+		ID:              id,
+		URI:             bucket.URI,
+		Category:        bucket.Category,
+		Slug:            slugPtr,
+		Version:         version,
+		Abstract:        &abstract,
+		Body:            &body,
+		SourceSceneURIs: pgarray.TextArray(append([]string(nil), sourceSceneURIs...)),
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if err := tx.Create(&row).Error; err != nil {
+		return fmt.Errorf("insert memory: %w", err)
+	}
+	log.Printf("t3 worker wrote memory uri=%s version=%d", bucket.URI, version)
+	return nil
+}

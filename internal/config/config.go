@@ -25,6 +25,7 @@ type Config struct {
 	Summarizer SummarizerConfig
 	Extraction ExtractionConfig
 	Scene      SceneConfig
+	Memory     MemoryConfig
 }
 
 type AuthConfig struct {
@@ -82,6 +83,12 @@ type SceneConfig struct {
 	MaxAtomsPerBatch int
 }
 
+type MemoryConfig struct {
+	Enabled          bool
+	PollInterval     time.Duration
+	MaxAtomsPerBatch int
+}
+
 type fileConfig struct {
 	DB struct {
 		URL string `toml:"url"`
@@ -127,6 +134,11 @@ type fileConfig struct {
 		BatchSessions    *int   `toml:"batch_sessions"`
 		MaxAtomsPerBatch *int   `toml:"max_atoms_per_batch"`
 	} `toml:"scene"`
+	Memory struct {
+		Enabled          *bool  `toml:"enabled"`
+		PollInterval     string `toml:"poll_interval"`
+		MaxAtomsPerBatch *int   `toml:"max_atoms_per_batch"`
+	} `toml:"memory"`
 }
 
 func Load() (Config, error) {
@@ -175,6 +187,11 @@ func Load() (Config, error) {
 			PollInterval:     15 * time.Second,
 			DelayAfterT1:     90 * time.Second,
 			BatchSessions:    8,
+			MaxAtomsPerBatch: 60,
+		},
+		Memory: MemoryConfig{
+			Enabled:          true,
+			PollInterval:     5 * time.Minute,
 			MaxAtomsPerBatch: 60,
 		},
 	}
@@ -407,6 +424,19 @@ func loadFileConfig(cfg *Config, path string, explicitPath bool) error {
 	if fc.Scene.MaxAtomsPerBatch != nil {
 		cfg.Scene.MaxAtomsPerBatch = *fc.Scene.MaxAtomsPerBatch
 	}
+	if fc.Memory.Enabled != nil {
+		cfg.Memory.Enabled = *fc.Memory.Enabled
+	}
+	if fc.Memory.PollInterval != "" {
+		v, err := time.ParseDuration(fc.Memory.PollInterval)
+		if err != nil {
+			return fmt.Errorf("parse memory.poll_interval in %q: %w", path, err)
+		}
+		cfg.Memory.PollInterval = v
+	}
+	if fc.Memory.MaxAtomsPerBatch != nil {
+		cfg.Memory.MaxAtomsPerBatch = *fc.Memory.MaxAtomsPerBatch
+	}
 
 	return nil
 }
@@ -601,6 +631,30 @@ func applyEnvOverrides(cfg *Config) error {
 			return fmt.Errorf("parse MYPAST_SCENE_MAX_ATOMS_PER_BATCH: %w", err)
 		}
 		cfg.Scene.MaxAtomsPerBatch = parsed
+	}
+	if v := os.Getenv("MYPAST_MEMORY_ENABLED"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			cfg.Memory.Enabled = true
+		case "0", "false", "no", "off":
+			cfg.Memory.Enabled = false
+		default:
+			return fmt.Errorf("parse MYPAST_MEMORY_ENABLED: invalid boolean %q", v)
+		}
+	}
+	if v := os.Getenv("MYPAST_MEMORY_POLL_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("parse MYPAST_MEMORY_POLL_INTERVAL: %w", err)
+		}
+		cfg.Memory.PollInterval = d
+	}
+	if v := os.Getenv("MYPAST_MEMORY_MAX_ATOMS_PER_BATCH"); v != "" {
+		parsed, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("parse MYPAST_MEMORY_MAX_ATOMS_PER_BATCH: %w", err)
+		}
+		cfg.Memory.MaxAtomsPerBatch = parsed
 	}
 	return nil
 }
