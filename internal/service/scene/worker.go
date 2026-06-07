@@ -268,10 +268,16 @@ func (w *Worker) persistScenes(
 				UpdatedAt:      now,
 			}
 			// Stable URI: reuse the existing row (preserve created_at), refresh content.
+			// Reset embedding so the embed worker re-embeds the changed abstract/body.
 			if err := tx.Clauses(clause.OnConflict{
 				Columns: []clause.Column{{Name: "uri"}},
-				DoUpdates: clause.AssignmentColumns([]string{
-					"display_name", "abstract", "body", "source_atom_uris", "updated_at",
+				DoUpdates: clause.Assignments(map[string]any{
+					"display_name":     gorm.Expr("EXCLUDED.display_name"),
+					"abstract":         gorm.Expr("EXCLUDED.abstract"),
+					"body":             gorm.Expr("EXCLUDED.body"),
+					"source_atom_uris": gorm.Expr("EXCLUDED.source_atom_uris"),
+					"updated_at":       gorm.Expr("EXCLUDED.updated_at"),
+					"embedding":        gorm.Expr("NULL"),
 				}),
 			}).Create(&row).Error; err != nil {
 				return fmt.Errorf("upsert scene: %w", err)

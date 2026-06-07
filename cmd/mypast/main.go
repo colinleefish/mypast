@@ -17,6 +17,7 @@ import (
 	"github.com/colinleefish/mypast/internal/server"
 	"github.com/colinleefish/mypast/internal/service/browse"
 	"github.com/colinleefish/mypast/internal/service/health"
+	"github.com/colinleefish/mypast/internal/service/embed"
 	"github.com/colinleefish/mypast/internal/service/extract"
 	"github.com/colinleefish/mypast/internal/service/memory"
 	"github.com/colinleefish/mypast/internal/service/scene"
@@ -103,6 +104,21 @@ func main() {
 							}
 						}()
 					}
+				}
+			}
+
+			// Embed worker uses its own provider/key (independent of the chat client).
+			if cfg.Embed.Enabled {
+				embedClient, err := llm.NewEmbeddingClient(cfg.Embed)
+				if err != nil {
+					log.Printf("embedding client unavailable; embed worker off: %v", err)
+				} else {
+					embedWorker := embed.NewWorker(database, embedClient, cfg.Embed)
+					go func() {
+						if err := embedWorker.Run(ctx); err != nil {
+							log.Printf("embed worker exited with error: %v", err)
+						}
+					}()
 				}
 			}
 

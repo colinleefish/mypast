@@ -26,6 +26,7 @@ type Config struct {
 	Extraction ExtractionConfig
 	Scene      SceneConfig
 	Memory     MemoryConfig
+	Embed      EmbedConfig
 }
 
 type AuthConfig struct {
@@ -89,6 +90,17 @@ type MemoryConfig struct {
 	MaxAtomsPerBatch int
 }
 
+type EmbedConfig struct {
+	Enabled      bool
+	APIBase      string
+	APIKey       string
+	Model        string
+	Dimensions   int
+	PollInterval time.Duration
+	BatchSize    int
+	Timeout      time.Duration
+}
+
 type fileConfig struct {
 	DB struct {
 		URL string `toml:"url"`
@@ -139,6 +151,16 @@ type fileConfig struct {
 		PollInterval     string `toml:"poll_interval"`
 		MaxAtomsPerBatch *int   `toml:"max_atoms_per_batch"`
 	} `toml:"memory"`
+	Embed struct {
+		Enabled      *bool  `toml:"enabled"`
+		APIBase      string `toml:"api_base"`
+		APIKey       string `toml:"api_key"`
+		Model        string `toml:"model"`
+		Dimensions   *int   `toml:"dimensions"`
+		PollInterval string `toml:"poll_interval"`
+		BatchSize    *int   `toml:"batch_size"`
+		Timeout      string `toml:"timeout"`
+	} `toml:"embed"`
 }
 
 func Load() (Config, error) {
@@ -193,6 +215,15 @@ func Load() (Config, error) {
 			Enabled:          true,
 			PollInterval:     5 * time.Minute,
 			MaxAtomsPerBatch: 60,
+		},
+		Embed: EmbedConfig{
+			Enabled:      true,
+			APIBase:      "https://open.bigmodel.cn/api/paas/v4",
+			Model:        "embedding-3",
+			Dimensions:   1024,
+			PollInterval: 30 * time.Second,
+			BatchSize:    32,
+			Timeout:      60 * time.Second,
 		},
 	}
 
@@ -437,6 +468,38 @@ func loadFileConfig(cfg *Config, path string, explicitPath bool) error {
 	if fc.Memory.MaxAtomsPerBatch != nil {
 		cfg.Memory.MaxAtomsPerBatch = *fc.Memory.MaxAtomsPerBatch
 	}
+	if fc.Embed.Enabled != nil {
+		cfg.Embed.Enabled = *fc.Embed.Enabled
+	}
+	if fc.Embed.APIBase != "" {
+		cfg.Embed.APIBase = fc.Embed.APIBase
+	}
+	if fc.Embed.APIKey != "" {
+		cfg.Embed.APIKey = fc.Embed.APIKey
+	}
+	if fc.Embed.Model != "" {
+		cfg.Embed.Model = fc.Embed.Model
+	}
+	if fc.Embed.Dimensions != nil {
+		cfg.Embed.Dimensions = *fc.Embed.Dimensions
+	}
+	if fc.Embed.PollInterval != "" {
+		v, err := time.ParseDuration(fc.Embed.PollInterval)
+		if err != nil {
+			return fmt.Errorf("parse embed.poll_interval in %q: %w", path, err)
+		}
+		cfg.Embed.PollInterval = v
+	}
+	if fc.Embed.BatchSize != nil {
+		cfg.Embed.BatchSize = *fc.Embed.BatchSize
+	}
+	if fc.Embed.Timeout != "" {
+		v, err := time.ParseDuration(fc.Embed.Timeout)
+		if err != nil {
+			return fmt.Errorf("parse embed.timeout in %q: %w", path, err)
+		}
+		cfg.Embed.Timeout = v
+	}
 
 	return nil
 }
@@ -655,6 +718,53 @@ func applyEnvOverrides(cfg *Config) error {
 			return fmt.Errorf("parse MYPAST_MEMORY_MAX_ATOMS_PER_BATCH: %w", err)
 		}
 		cfg.Memory.MaxAtomsPerBatch = parsed
+	}
+	if v := os.Getenv("MYPAST_EMBED_ENABLED"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			cfg.Embed.Enabled = true
+		case "0", "false", "no", "off":
+			cfg.Embed.Enabled = false
+		default:
+			return fmt.Errorf("parse MYPAST_EMBED_ENABLED: invalid boolean %q", v)
+		}
+	}
+	if v := os.Getenv("MYPAST_EMBED_API_BASE"); v != "" {
+		cfg.Embed.APIBase = v
+	}
+	if v := os.Getenv("MYPAST_EMBED_API_KEY"); v != "" {
+		cfg.Embed.APIKey = v
+	}
+	if v := os.Getenv("MYPAST_EMBED_MODEL"); v != "" {
+		cfg.Embed.Model = v
+	}
+	if v := os.Getenv("MYPAST_EMBED_DIMENSIONS"); v != "" {
+		parsed, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("parse MYPAST_EMBED_DIMENSIONS: %w", err)
+		}
+		cfg.Embed.Dimensions = parsed
+	}
+	if v := os.Getenv("MYPAST_EMBED_POLL_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("parse MYPAST_EMBED_POLL_INTERVAL: %w", err)
+		}
+		cfg.Embed.PollInterval = d
+	}
+	if v := os.Getenv("MYPAST_EMBED_BATCH_SIZE"); v != "" {
+		parsed, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("parse MYPAST_EMBED_BATCH_SIZE: %w", err)
+		}
+		cfg.Embed.BatchSize = parsed
+	}
+	if v := os.Getenv("MYPAST_EMBED_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("parse MYPAST_EMBED_TIMEOUT: %w", err)
+		}
+		cfg.Embed.Timeout = d
 	}
 	return nil
 }
