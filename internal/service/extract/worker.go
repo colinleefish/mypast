@@ -131,16 +131,16 @@ func (w *Worker) processSession(ctx context.Context, sessionID uuid.UUID) error 
 
 	raw, err := w.llm.ExtractAtoms(ctx, batch.MessagesJSONL)
 	if err != nil {
-		return w.markSessionFailed(ctx, sessionID, fmt.Errorf("llm extract: %w", err))
+		return w.handleProcessError(ctx, sessionID, fmt.Errorf("llm extract: %w", err))
 	}
 
 	parsed, err := parseExtractResponse(raw)
 	if err != nil {
-		return w.markSessionFailed(ctx, sessionID, fmt.Errorf("parse extract response: %w", err))
+		return w.handleProcessError(ctx, sessionID, fmt.Errorf("parse extract response: %w", err))
 	}
 
 	if err := w.persistBatch(ctx, sessionID, batch, parsed); err != nil {
-		return w.markSessionFailed(ctx, sessionID, err)
+		return w.handleProcessError(ctx, sessionID, err)
 	}
 	return nil
 }

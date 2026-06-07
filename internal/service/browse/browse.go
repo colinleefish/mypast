@@ -52,6 +52,7 @@ type SessionDetail struct {
 	Turns         []TurnRow           `json:"turns"`
 	PipelineState *model.PipelineState `json:"pipeline_state"`
 	Atoms         []model.Atom        `json:"atoms"`
+	Scenes        []model.Scene       `json:"scenes"`
 }
 
 type TurnRow struct {
@@ -151,11 +152,20 @@ func (s *Service) GetSession(ctx context.Context, sessionKey string) (SessionDet
 		return SessionDetail{}, fmt.Errorf("load atoms: %w", err)
 	}
 
+	var scenes []model.Scene
+	if err := s.db.WithContext(ctx).
+		Where("session_id = ?", session.ID).
+		Order("created_at asc, uri asc").
+		Find(&scenes).Error; err != nil {
+		return SessionDetail{}, fmt.Errorf("load scenes: %w", err)
+	}
+
 	return SessionDetail{
 		Session:       sessionToRow(session, int64(len(turns))),
 		Turns:         turnRows,
 		PipelineState: pipeline,
 		Atoms:         atoms,
+		Scenes:        scenes,
 	}, nil
 }
 

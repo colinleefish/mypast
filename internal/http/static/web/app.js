@@ -189,6 +189,18 @@ async function switchTab(id) {
   }
 }
 
+async function goToSession(sessionKey) {
+  state.tab = "sessions";
+  state.selectedKey = sessionKey;
+  renderNav();
+  showStatus("");
+  try {
+    await renderPanel();
+  } catch (err) {
+    showStatus(err.message);
+  }
+}
+
 async function loadOverviewCounts() {
   state.overview = await api("/overview");
   renderNav();
@@ -505,7 +517,7 @@ function renderTasksPanel(p, items) {
 
 function renderPipelinePanel(p, items) {
   p.innerHTML = `
-    ${pageHeader("Pipeline", "Per-session worker state.")}
+    ${pageHeader("Pipeline", "Per-session worker state. Click a row to open the session.")}
     <div class="card data-table-card">
       <div class="table-wrap">
         <table class="data-table">
@@ -515,10 +527,11 @@ function renderPipelinePanel(p, items) {
           <tbody>
             ${items
               .map((row, i) => {
-                const sid = field(row, "session_id", "SessionID");
+                const sessionKey = field(row, "session_key", "SessionKey");
+                const label = sessionKey ? sessionKey.slice(0, 8) + "…" : "—";
                 return `
-              <tr data-idx="${i}">
-                <td class="cell-mono">${esc(sid ? String(sid).slice(0, 8) + "…" : "—")}</td>
+              <tr data-idx="${i}" data-key="${esc(sessionKey || "")}">
+                <td class="cell-mono">${esc(label)}</td>
                 <td>${statusBadge(field(row, "t1_status", "T1Status"))}</td>
                 <td>${statusBadge(field(row, "t2_status", "T2Status"))}</td>
                 <td>${statusBadge(field(row, "t3_status", "T3Status"))}</td>
@@ -530,6 +543,11 @@ function renderPipelinePanel(p, items) {
         </table>
       </div>
     </div>`;
+  p.querySelectorAll("tbody tr[data-key]").forEach((tr) => {
+    const key = tr.dataset.key;
+    if (!key) return;
+    tr.addEventListener("click", () => goToSession(key));
+  });
 }
 
 function wireGenericRowDetail(root, items, textFn) {
@@ -697,6 +715,29 @@ async function openSession(sessionKey, scrollPanel = true) {
         </div>`
       : '<p class="empty">No atoms yet</p>';
 
+  const scenesTable =
+    data.scenes.length > 0
+      ? `<div class="table-wrap" style="margin-top:0.75rem">
+          <table class="data-table">
+            <thead><tr><th>Scene</th><th>Summary</th></tr></thead>
+            <tbody>${data.scenes
+              .map((sc) => {
+                const name = field(sc, "display_name", "DisplayName") || "Scene";
+                const abstract = field(sc, "abstract", "Abstract");
+                const body = field(sc, "body", "Body");
+                return `<tr>
+                  <td>
+                    <div class="cell-primary">${esc(name)}</div>
+                    <div class="cell-secondary cell-mono">${esc(truncate(field(sc, "uri", "URI"), 48))}</div>
+                  </td>
+                  <td><div class="cell-primary cell-clamp-2">${esc(abstract || truncate(body, 160) || "—")}</div></td>
+                </tr>`;
+              })
+              .join("")}</tbody>
+          </table>
+        </div>`
+      : '<p class="empty">No scenes yet</p>';
+
   sessionDetail.innerHTML = `
     <div class="card row-detail" style="margin-top:1rem">
       <div class="card-header">
@@ -718,6 +759,8 @@ async function openSession(sessionKey, scrollPanel = true) {
           .join("")}
         <h3 style="font-size:0.875rem;font-weight:600;margin:1.25rem 0 0.5rem">Atoms (${data.atoms.length})</h3>
         ${atomsTable}
+        <h3 style="font-size:0.875rem;font-weight:600;margin:1.25rem 0 0.5rem">Scenes (${data.scenes.length})</h3>
+        ${scenesTable}
       </div>
     </div>`;
 
