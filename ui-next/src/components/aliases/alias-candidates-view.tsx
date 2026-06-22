@@ -9,49 +9,83 @@ import { DetailLead, DetailMeta, DetailUri } from "@/components/detail";
 import { Button } from "@/components/ui/button";
 import {
   confirmAliasCandidate,
+  createAlias,
   listAliasCandidates,
   rejectAliasCandidate,
 } from "@/lib/api";
 import { fmtDateShort, fmtDateTime, truncate } from "@/lib/format";
 import type { AliasCandidateModel } from "@/lib/types";
 
+function CandidateDetail({
+  c,
+  onConfirm,
+  onReject,
+  busy,
+}: {
+  c: AliasCandidateModel;
+  onConfirm: (c: AliasCandidateModel, swapped: boolean) => void;
+  onReject: (id: string) => void;
+  busy: boolean;
+}) {
+  const [swapped, setSwapped] = useState(false);
+  const aliasUri = swapped ? c.canonical_uri : c.alias_uri;
+  const canonicalUri = swapped ? c.alias_uri : c.canonical_uri;
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
+        <DetailUri>{aliasUri}</DetailUri>
+        <button
+          type="button"
+          title="Swap alias and canonical"
+          onClick={() => setSwapped((s) => !s)}
+          className="text-muted-foreground hover:text-foreground shrink-0 rounded transition-colors"
+        >
+          <ArrowRight
+            className={`size-3.5 transition-transform duration-200 ${swapped ? "rotate-180" : ""}`}
+          />
+        </button>
+        <DetailUri>{canonicalUri}</DetailUri>
+      </div>
+      {c.rationale && <DetailLead>{c.rationale}</DetailLead>}
+      {c.created_at && (
+        <DetailMeta>Proposed {fmtDateTime(c.created_at)}</DetailMeta>
+      )}
+      <div className="flex gap-2 pt-2">
+        <Button size="sm" disabled={busy} onClick={() => onConfirm(c, swapped)}>
+          <Check />
+          {busy ? "Working…" : "Confirm alias"}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={() => onReject(c.id)}
+        >
+          <X />
+          Reject
+        </Button>
+      </div>
+    </>
+  );
+}
+
 function detailOf(
   c: AliasCandidateModel,
-  onConfirm: (id: string) => void,
+  onConfirm: (c: AliasCandidateModel, swapped: boolean) => void,
   onReject: (id: string) => void,
   busyID: string | null,
 ): RowDetail {
-  const busy = busyID === c.id;
   return {
     title: "Alias suggestion",
     description: `${(c.similarity * 100).toFixed(1)}% similar`,
     body: (
-      <>
-        <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
-          <DetailUri>{c.alias_uri}</DetailUri>
-          <ArrowRight className="text-muted-foreground size-3.5 shrink-0" />
-          <DetailUri>{c.canonical_uri}</DetailUri>
-        </div>
-        {c.rationale && <DetailLead>{c.rationale}</DetailLead>}
-        {c.created_at && (
-          <DetailMeta>Proposed {fmtDateTime(c.created_at)}</DetailMeta>
-        )}
-        <div className="flex gap-2 pt-2">
-          <Button size="sm" disabled={busy} onClick={() => onConfirm(c.id)}>
-            <Check />
-            {busy ? "Working…" : "Confirm alias"}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy}
-            onClick={() => onReject(c.id)}
-          >
-            <X />
-            Reject
-          </Button>
-        </div>
-      </>
+      <CandidateDetail
+        c={c}
+        onConfirm={onConfirm}
+        onReject={onReject}
+        busy={busyID === c.id}
+      />
     ),
   };
 }
@@ -76,7 +110,16 @@ export function AliasCandidatesView() {
   );
 
   const handleConfirm = useCallback(
-    (id: string) => run(id, confirmAliasCandidate),
+    (c: AliasCandidateModel, swapped: boolean) => {
+      if (!swapped) {
+        run(c.id, confirmAliasCandidate);
+      } else {
+        run(c.id, async (id) => {
+          await rejectAliasCandidate(id);
+          await createAlias({ alias_uri: c.canonical_uri, canonical_uri: c.alias_uri });
+        });
+      }
+    },
     [run],
   );
   const handleReject = useCallback(
