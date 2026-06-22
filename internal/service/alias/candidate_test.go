@@ -11,7 +11,7 @@ import (
 
 func TestConfirmCandidate_rejectsBadID(t *testing.T) {
 	s := &Service{}
-	_, err := s.ConfirmCandidate(context.Background(), "not-a-uuid")
+	_, err := s.ConfirmCandidate(context.Background(), "not-a-uuid", "")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected ErrInvalidInput, got %v", err)
 	}
@@ -19,7 +19,7 @@ func TestConfirmCandidate_rejectsBadID(t *testing.T) {
 
 func TestRejectCandidate_rejectsBadID(t *testing.T) {
 	s := &Service{}
-	err := s.RejectCandidate(context.Background(), "not-a-uuid")
+	err := s.RejectCandidate(context.Background(), "not-a-uuid", "")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected ErrInvalidInput, got %v", err)
 	}

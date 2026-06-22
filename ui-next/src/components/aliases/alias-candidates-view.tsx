@@ -23,11 +23,12 @@ function CandidateDetail({
   busy,
 }: {
   c: AliasCandidateModel;
-  onConfirm: (c: AliasCandidateModel, swapped: boolean) => void;
-  onReject: (id: string) => void;
+  onConfirm: (c: AliasCandidateModel, swapped: boolean, note: string) => void;
+  onReject: (id: string, note: string) => void;
   busy: boolean;
 }) {
   const [swapped, setSwapped] = useState(false);
+  const [note, setNote] = useState("");
   const canonicalUri = swapped ? c.alias_uri : c.canonical_uri;
   const aliasUri = swapped ? c.canonical_uri : c.alias_uri;
 
@@ -63,8 +64,16 @@ function CandidateDetail({
       {c.created_at && (
         <DetailMeta>Proposed {fmtDateTime(c.created_at)}</DetailMeta>
       )}
-      <div className="flex gap-2 pt-2">
-        <Button size="sm" disabled={busy} onClick={() => onConfirm(c, swapped)}>
+      <textarea
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Note (optional)"
+        rows={2}
+        disabled={busy}
+        className="border-input placeholder:text-muted-foreground focus-visible:ring-ring w-full rounded-md border bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:ring-1 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+      />
+      <div className="flex gap-2">
+        <Button size="sm" disabled={busy} onClick={() => onConfirm(c, swapped, note)}>
           <Check />
           {busy ? "Working…" : "Confirm alias"}
         </Button>
@@ -72,7 +81,7 @@ function CandidateDetail({
           variant="outline"
           size="sm"
           disabled={busy}
-          onClick={() => onReject(c.id)}
+          onClick={() => onReject(c.id, note)}
         >
           <X />
           Reject
@@ -84,8 +93,8 @@ function CandidateDetail({
 
 function detailOf(
   c: AliasCandidateModel,
-  onConfirm: (c: AliasCandidateModel, swapped: boolean) => void,
-  onReject: (id: string) => void,
+  onConfirm: (c: AliasCandidateModel, swapped: boolean, note: string) => void,
+  onReject: (id: string, note: string) => void,
   busyID: string | null,
 ): RowDetail {
   return {
@@ -122,20 +131,20 @@ export function AliasCandidatesView() {
   );
 
   const handleConfirm = useCallback(
-    (c: AliasCandidateModel, swapped: boolean) => {
+    (c: AliasCandidateModel, swapped: boolean, note: string) => {
       if (!swapped) {
-        run(c.id, confirmAliasCandidate);
+        run(c.id, (id) => confirmAliasCandidate(id, note));
       } else {
         run(c.id, async (id) => {
           await rejectAliasCandidate(id);
-          await createAlias({ alias_uri: c.canonical_uri, canonical_uri: c.alias_uri });
+          await createAlias({ alias_uri: c.canonical_uri, canonical_uri: c.alias_uri, note });
         });
       }
     },
     [run],
   );
   const handleReject = useCallback(
-    (id: string) => run(id, rejectAliasCandidate),
+    (id: string, note: string) => run(id, (id) => rejectAliasCandidate(id, note)),
     [run],
   );
 

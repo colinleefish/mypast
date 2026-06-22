@@ -51,13 +51,11 @@ func (s *Service) ListCandidates(ctx context.Context, status string) ([]Candidat
 	return out, nil
 }
 
-// ConfirmCandidate promotes a pending candidate into a live alias: it creates
-// the alias (with the candidate's rationale as the note) and marks the candidate
-// confirmed. It returns the created alias so callers can run the same post-write
-// side-effects as a manual `alias set` (wake T3, supersede the alias slug).
-// Invariant violations from Create (e.g. ErrConflict) are propagated and the
-// candidate is left pending.
-func (s *Service) ConfirmCandidate(ctx context.Context, candidateID string) (model.Alias, error) {
+// ConfirmCandidate promotes a pending candidate into a live alias and marks it
+// confirmed. userNote, if non-empty, is stored as the alias note; otherwise the
+// AI rationale is used. Invariant violations from Create (e.g. ErrConflict) are
+// propagated and the candidate is left pending.
+func (s *Service) ConfirmCandidate(ctx context.Context, candidateID, userNote string) (model.Alias, error) {
 	id, err := uuid.Parse(strings.TrimSpace(candidateID))
 	if err != nil {
 		return model.Alias{}, fmt.Errorf("%w: candidate id: %v", ErrInvalidInput, err)
@@ -73,8 +71,8 @@ func (s *Service) ConfirmCandidate(ctx context.Context, candidateID string) (mod
 		return model.Alias{}, fmt.Errorf("load candidate: %w", err)
 	}
 
-	note := ""
-	if cand.Rationale != nil {
+	note := strings.TrimSpace(userNote)
+	if note == "" && cand.Rationale != nil {
 		note = *cand.Rationale
 	}
 	row, err := s.Create(ctx, CreateInput{
@@ -101,21 +99,26 @@ func (s *Service) ConfirmCandidate(ctx context.Context, candidateID string) (mod
 	return row, nil
 }
 
-// RejectCandidate marks a pending candidate rejected. The unique pair index then
-// guarantees the same directed pair is never re-proposed.
-func (s *Service) RejectCandidate(ctx context.Context, candidateID string) error {
+// RejectCandidate marks a pending candidate rejected. reason, if non-empty,
+// overwrites the stored rationale so reviewers can record why they declined.
+// The unique pair index then guarantees the same directed pair is never re-proposed.
+func (s *Service) RejectCandidate(ctx context.Context, candidateID, reason string) error {
 	id, err := uuid.Parse(strings.TrimSpace(candidateID))
 	if err != nil {
 		return fmt.Errorf("%w: candidate id: %v", ErrInvalidInput, err)
 	}
+	updates := map[string]any{
+		"status":      model.AliasCandidateStatusRejected,
+		"resolved_at": s.now().UTC(),
+		"updated_at":  s.now().UTC(),
+	}
+	if r := strings.TrimSpace(reason); r != "" {
+		updates["rationale"] = r
+	}
 	res := s.db.WithContext(ctx).
 		Model(&model.AliasCandidate{}).
 		Where("id = ? AND status = ?", id, model.AliasCandidateStatusPending).
-		Updates(map[string]any{
-			"status":      model.AliasCandidateStatusRejected,
-			"resolved_at": s.now().UTC(),
-			"updated_at":  s.now().UTC(),
-		})
+		Updates(updates)
 	if res.Error != nil {
 		return fmt.Errorf("reject candidate: %w", res.Error)
 	}

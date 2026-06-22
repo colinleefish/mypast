@@ -114,7 +114,8 @@ func (h *AliasHandler) ListCandidates(c *gin.Context) {
 }
 
 type candidateActionRequest struct {
-	ID string `json:"id"`
+	ID   string `json:"id"`
+	Note string `json:"note"`
 }
 
 // ConfirmCandidate promotes a pending candidate into a live alias and runs the
@@ -126,7 +127,7 @@ func (h *AliasHandler) ConfirmCandidate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	row, err := h.service.ConfirmCandidate(c.Request.Context(), req.ID)
+	row, err := h.service.ConfirmCandidate(c.Request.Context(), req.ID, req.Note)
 	switch {
 	case err == nil:
 		h.wakeT3(c, []string{row.AliasURI, row.CanonicalURI})
@@ -156,7 +157,7 @@ func (h *AliasHandler) RejectCandidate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	err := h.service.RejectCandidate(c.Request.Context(), req.ID)
+	err := h.service.RejectCandidate(c.Request.Context(), req.ID, req.Note)
 	switch {
 	case err == nil:
 		c.JSON(http.StatusOK, gin.H{"id": req.ID, "rejected": true})

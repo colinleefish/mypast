@@ -87,6 +87,12 @@ func Submit(ctx context.Context, in SubmitInput) error {
 		}
 		sessionID, messages, parseReason, err = buildMessagesFromClaudePayload(in.StdinJSON)
 
+	case "codex":
+		if !isCodexPayload(in.StdinJSON) {
+			return logf("skip", "not a codex payload")
+		}
+		sessionID, messages, parseReason, err = buildMessagesFromCodexPayload(in.StdinJSON)
+
 	default:
 		return fmt.Errorf("hook-submit: unknown source %q", source)
 	}

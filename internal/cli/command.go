@@ -69,20 +69,19 @@ func (r Runner) runHookSubmit(ctx context.Context, args []string) error {
 	if stdin == nil {
 		stdin = os.Stdin
 	}
-	stdout := r.Stdout
-	if stdout == nil {
-		stdout = os.Stdout
-	}
 
 	payload, err := io.ReadAll(stdin)
 	if err != nil {
 		return fmt.Errorf("read hook-submit stdin: %w", err)
 	}
 
+	// Diagnostic log goes to stderr so stdout stays empty.
+	// Codex Stop hooks require stdout to be empty or valid JSON on exit 0;
+	// writing log lines to stdout causes "invalid stop hook JSON output".
 	return hook.Submit(ctx, hook.SubmitInput{
 		Source:     source,
 		StdinJSON:  payload,
-		OutputSink: stdout,
+		OutputSink: os.Stderr,
 	})
 }
 
