@@ -8,6 +8,7 @@ import { ServerDataTable } from "@/components/data-table";
 import { StatusBadge } from "@/components/status-badge";
 import { pagePipelineStates } from "@/lib/api";
 import { pick, shortKey } from "@/lib/format";
+import { sessionDetailHref } from "@/lib/session-routes";
 import type { PipelineRow } from "@/lib/types";
 
 export function PipelineTable() {
@@ -70,7 +71,7 @@ export function PipelineTable() {
       emptyMessage="No pipeline state yet."
       onRowClick={(r) => {
         if (r.session_key) {
-          router.push(`/sessions/${encodeURIComponent(r.session_key)}`);
+          router.push(sessionDetailHref(r.session_key));
         }
       }}
     />

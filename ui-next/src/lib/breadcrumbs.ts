@@ -1,3 +1,6 @@
+import type { SessionDetailTab } from "@/components/sessions/session-detail-types";
+import { sessionDetailHref, sessionKeyFromSearchParams } from "@/lib/session-routes";
+
 export interface BreadcrumbItem {
   label: string;
   href?: string;
@@ -6,6 +9,7 @@ export interface BreadcrumbItem {
 const STATIC_ROUTES: Record<string, string> = {
   "/": "Overview",
   "/sessions": "Sessions",
+  "/sessions/detail": "Sessions",
   "/memories": "Memories",
   "/corrections": "Corrections",
   "/tasks": "Tasks",
@@ -17,6 +21,31 @@ const SESSION_TAB_LABELS: Record<string, string> = {
   scenes: "Scenes",
 };
 
+function sessionDetailCrumbs(
+  key: string,
+  searchParams: URLSearchParams,
+  dynamicTitle?: string,
+): BreadcrumbItem[] {
+  const tab = searchParams.get("tab") as SessionDetailTab | null;
+  const hasTab = tab && tab !== "turns" && SESSION_TAB_LABELS[tab];
+  const title =
+    dynamicTitle ?? (key.length > 8 ? `${key.slice(0, 8)}…` : key);
+
+  const crumbs: BreadcrumbItem[] = [
+    { label: "Sessions", href: "/sessions" },
+    {
+      label: title,
+      href: hasTab ? sessionDetailHref(key) : undefined,
+    },
+  ];
+
+  if (hasTab) {
+    crumbs.push({ label: SESSION_TAB_LABELS[tab] });
+  }
+
+  return crumbs;
+}
+
 export function buildBreadcrumbs(
   pathname: string,
   searchParams: URLSearchParams,
@@ -26,34 +55,17 @@ export function buildBreadcrumbs(
     return [{ label: "Overview" }];
   }
 
+  if (pathname === "/sessions/detail") {
+    const key = sessionKeyFromSearchParams(searchParams);
+    if (!key) {
+      return [{ label: "Sessions", href: "/sessions" }, { label: "Session" }];
+    }
+    return sessionDetailCrumbs(key, searchParams, dynamicTitle);
+  }
+
   const staticLabel = STATIC_ROUTES[pathname];
   if (staticLabel) {
     return [{ label: staticLabel }];
-  }
-
-  const sessionMatch = pathname.match(/^\/sessions\/([^/]+)$/);
-  if (sessionMatch) {
-    const key = decodeURIComponent(sessionMatch[1]);
-    const tab = searchParams.get("tab");
-    const hasTab = tab && tab !== "turns" && SESSION_TAB_LABELS[tab];
-    const sessionHref = `/sessions/${encodeURIComponent(key)}`;
-    const title =
-      dynamicTitle ??
-      (key.length > 8 ? `${key.slice(0, 8)}…` : key);
-
-    const crumbs: BreadcrumbItem[] = [
-      { label: "Sessions", href: "/sessions" },
-      {
-        label: title,
-        href: hasTab ? sessionHref : undefined,
-      },
-    ];
-
-    if (hasTab) {
-      crumbs.push({ label: SESSION_TAB_LABELS[tab] });
-    }
-
-    return crumbs;
   }
 
   const segment = pathname.split("/").filter(Boolean).pop() ?? "Page";

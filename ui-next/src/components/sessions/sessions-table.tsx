@@ -8,6 +8,7 @@ import { ServerDataTable, SortButton } from "@/components/data-table";
 import { SessionPipelineSummary } from "@/components/sessions/session-pipeline-summary";
 import { pageSessions } from "@/lib/api";
 import { fmtDateTime, sessionDisplayTitle } from "@/lib/format";
+import { sessionDetailHref } from "@/lib/session-routes";
 import type { SessionRow } from "@/lib/types";
 
 export function SessionsTable() {
@@ -74,9 +75,7 @@ export function SessionsTable() {
       searchPlaceholder="Search title, summary, key…"
       emptyMessage="No sessions yet."
       initialSorting={[{ id: "updated", desc: true }]}
-      onRowClick={(s) =>
-        router.push(`/sessions/${encodeURIComponent(s.session_key)}`)
-      }
+      onRowClick={(s) => router.push(sessionDetailHref(s.session_key))}
     />
   );
 }

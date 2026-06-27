@@ -20,6 +20,7 @@ import {
   sessionHasSummary,
   shortKey,
 } from "@/lib/format";
+import { sessionDetailHref } from "@/lib/session-routes";
 import type { SessionDetail } from "@/lib/types";
 
 export type { SessionDetailTab } from "@/components/sessions/session-detail-types";
@@ -44,14 +45,7 @@ export function SessionDetailView({ sessionKey }: { sessionKey: string }) {
   }, [sessionKey]);
 
   const setTab = (next: SessionDetailTab) => {
-    const params = new URLSearchParams(searchParams.toString());
-    if (next === "turns") params.delete("tab");
-    else params.set("tab", next);
-    const q = params.toString();
-    router.replace(
-      `/sessions/${encodeURIComponent(sessionKey)}${q ? `?${q}` : ""}`,
-      { scroll: false },
-    );
+    router.replace(sessionDetailHref(sessionKey, next), { scroll: false });
   };
 
   const session = detail?.session;
